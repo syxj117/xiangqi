@@ -257,14 +257,15 @@
   // ---------- 编辑模式: 棋子放置约束 ----------
   // 中国象棋标准开局位置规则:
   //   帅/将: 必须在己方九宫格内 (col 3-5, 红方 row 7-9 / 黑方 row 0-2)
-  //   仕/士: 只能在九宫内 5 个位置 (中心 + 四角), 因为士只能斜走,
-  //          不能放在 2/4/6/8 这些边中点 (col 3/5 row 边值 或 col 4 row 中值)
-  //     红仕: (4,7)(4,8)(4,9)(3,8)(5,8) -> 即中心(4,8)+四角
-  //     黑士: (4,0)(4,1)(4,2)(3,1)(5,1) -> 即中心(4,1)+四角
+  //   仕/士: 只能在九宫四角 4 个位置, 因为士走斜线,
+  //          不能放在 2/4/5/6/8 这些位置（边中点和中心）
+  //     红仕: (3,7)(5,7)(3,9)(5,9) -> 四角
+  //     黑士: (3,0)(5,0)(3,2)(5,2) -> 四角
   //   相/象: 必须在本方半场, 且只能放在 7 个固定"田字"落点上
   //     红相落点: (2,9)(2,5)(6,9)(6,5)(0,7)(4,7)(8,7)
   //     黑象落点: (2,0)(2,4)(6,0)(6,4)(0,2)(4,2)(8,2)
-  //   其它棋子(马/车/炮/兵/卒): 棋盘任意位置均可
+  //   兵/卒: 只能放在本方半场 (红方 row 5-9, 黑方 row 0-4)
+  //   马/车/炮: 棋盘任意位置均可
   const ELEPHANT_POINTS = {
     [RED]: [[2, 9], [2, 5], [6, 9], [6, 5], [0, 7], [4, 7], [8, 7]],
     [BLACK]: [[2, 0], [2, 4], [6, 0], [6, 4], [0, 2], [4, 2], [8, 2]],
@@ -297,6 +298,9 @@
     if (type === T.ELEPHANT) {
       return ELEPHANT_POINTS[side].some(([c, r]) => c === col && r === row);
     }
+    if (type === T.PAWN) {
+      return onOwnSide(side, row);
+    }
     return true;
   }
 
@@ -308,8 +312,9 @@
     }
     if (!canPlacePiece(side, type, col, row)) {
       if (type === T.KING) return { ok: false, reason: '帅/将必须放在己方九宫格内' };
-      if (type === T.ADVISOR) return { ok: false, reason: '士/仕只能放在九宫四角及中心（共 5 个落点）' };
+      if (type === T.ADVISOR) return { ok: false, reason: '士/仕只能放在九宫四角（共 4 个落点）' };
       if (type === T.ELEPHANT) return { ok: false, reason: '相/象只能放在本方半场的 7 个田字落点' };
+      if (type === T.PAWN) return { ok: false, reason: (side === RED ? '红兵' : '黑卒') + '只能放在本方半场' };
       return { ok: false, reason: '不能放在这里' };
     }
     const sameSideKing = pieces.filter(p => p.side === side && p.type === T.KING);
@@ -883,6 +888,15 @@
     const midY = padding + cell * 4.5;
     ctx.fillText('楚 河', padding + cell * 2, midY);
     ctx.fillText('汉 界', padding + cell * 6, midY);
+
+    // 红方/黑方侧边标识
+    ctx.font = `${Math.round(cell * 0.4)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(107, 68, 35, 0.55)';
+    ctx.fillText('黑 方', padding + cell * 4, padding * 0.35);
+    ctx.fillStyle = 'rgba(178, 34, 34, 0.55)';
+    ctx.fillText('红 方', padding + cell * 4, padding + cell * 9 + padding * 0.35);
 
     // 炮位 / 兵位 的小十字标记
     drawPositionMarks();
