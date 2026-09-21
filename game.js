@@ -179,6 +179,8 @@
   const tipPlayEl = document.getElementById('tip-play');
   const btnEditClear = document.getElementById('btn-edit-clear');
   const btnEditDefault = document.getElementById('btn-edit-default');
+  const btnEditSave = document.getElementById('btn-edit-save');
+  const btnEditLoad = document.getElementById('btn-edit-load');
   const btnEditStart = document.getElementById('btn-edit-start');
 
   // ---------- 渲染参数 ----------
@@ -1554,6 +1556,62 @@
     exitEditMode(true);
     // 若红方是 AI, 自动开局
     if (state.redPlayer !== 'human') setTimeout(maybeAITurn, 300);
+  });
+
+  // 本地存储 key
+  const STORAGE_KEY = 'xiangqi_board_backup';
+
+  // 备份当前棋盘到 localStorage
+  btnEditSave.addEventListener('click', () => {
+    try {
+      const data = {
+        pieces: state.pieces,
+        savedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      editorTipEl.textContent = `✅ 已备份 ${state.pieces.length} 个棋子到本地`;
+      editorTipEl.style.color = '#36b37e';
+      setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 2500);
+      logger.info('edit_save_backup', { pieces: state.pieces.length });
+    } catch (e) {
+      editorTipEl.textContent = '❌ 备份失败（可能存储已满）';
+      editorTipEl.style.color = '#ff6b6b';
+      setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 2500);
+    }
+  });
+
+  // 从 localStorage 读取备份棋盘
+  btnEditLoad.addEventListener('click', () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        editorTipEl.textContent = '⚠️ 没有找到已备份的棋盘';
+        editorTipEl.style.color = '#ff8c42';
+        setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 2500);
+        return;
+      }
+      const data = JSON.parse(raw);
+      if (!data.pieces || !Array.isArray(data.pieces)) {
+        editorTipEl.textContent = '❌ 备份数据损坏';
+        editorTipEl.style.color = '#ff6b6b';
+        setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 2500);
+        return;
+      }
+      state.pieces = data.pieces;
+      state.history = [];
+      state.selected = null;
+      state.legalMoves = [];
+      draw();
+      const time = data.savedAt ? new Date(data.savedAt).toLocaleString() : '';
+      editorTipEl.textContent = `✅ 已读取备份（${state.pieces.length} 个棋子${time ? '，备份于 ' + time : ''}）`;
+      editorTipEl.style.color = '#36b37e';
+      setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 3000);
+      logger.info('edit_load_backup', { pieces: state.pieces.length });
+    } catch (e) {
+      editorTipEl.textContent = '❌ 读取失败';
+      editorTipEl.style.color = '#ff6b6b';
+      setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 2500);
+    }
   });
 
   function updateStatus() {
