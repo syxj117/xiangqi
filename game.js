@@ -128,6 +128,9 @@
     aiThinking: false,   // AI 是否正在思考
     aiToken: 0,          // AI 回调世代号, 用于作废过期回调
     moveHistory: [],      // 走法记录 [{fromCol,fromRow,toCol,toRow,side}] 供 AI 上下文
+    mode: 'play',         // 'play' 对战 | 'edit' 编辑
+    editSide: RED,        // 编辑模式当前选中的方
+    editType: T.KING,     // 编辑模式当前选中的棋子类型
   };
 
   // ---------- DOM ----------
@@ -149,6 +152,15 @@
   const cfgBaseUrl = document.getElementById('cfg-baseurl');
   const cfgApiKey = document.getElementById('cfg-apikey');
   const cfgModel = document.getElementById('cfg-model');
+  const btnEditMode = document.getElementById('btn-edit-mode');
+  const editorEl = document.getElementById('editor');
+  const editorRedEl = document.getElementById('editor-red');
+  const editorBlackEl = document.getElementById('editor-black');
+  const editorTipEl = document.getElementById('editor-tip');
+  const tipPlayEl = document.getElementById('tip-play');
+  const btnEditClear = document.getElementById('btn-edit-clear');
+  const btnEditDefault = document.getElementById('btn-edit-default');
+  const btnEditStart = document.getElementById('btn-edit-start');
 
   // ---------- 渲染参数 ----------
   let layout = {
@@ -221,6 +233,27 @@
 
   function onOwnSide(side, row) {
     return side === RED ? row >= 5 : row <= 4;
+  }
+
+  // ---------- 编辑模式: 棋子放置约束 ----------
+  // 中国象棋标准开局位置规则:
+  //   帅/将、仕/士: 必须在己方九宫格内 (col 3-5, 红方 row 7-9 / 黑方 row 0-2)
+  //   相/象: 必须在本方半场, 且只能放在 7 个固定"田字"落点上
+  //     红相落点: (2,9)(2,5)(6,9)(6,5)(0,7)(4,7)(8,7)
+  //     黑象落点: (2,0)(2,4)(6,0)(6,4)(0,2)(4,2)(8,2)
+  //   其它棋子(马/车/炮/兵/卒): 棋盘任意位置均可
+  const ELEPHANT_POINTS = {
+    [RED]: [[2, 9], [2, 5], [6, 9], [6, 5], [0, 7], [4, 7], [8, 7]],
+    [BLACK]: [[2, 0], [2, 4], [6, 0], [6, 4], [0, 2], [4, 2], [8, 2]],
+  };
+
+  function canPlacePiece(side, type, col, row) {
+    if (!inBoard(col, row)) return false;
+    if (type === T.KING || type === T.ADVISOR) return inPalace(side, col, row);
+    if (type === T.ELEPHANT) {
+      return ELEPHANT_POINTS[side].some(([c, r]) => c === col && r === row);
+    }
+    return true;
   }
 
   // 统计两点之间(不含端点)的棋子数
@@ -772,6 +805,21 @@
       }
     }
 
+    // 编辑模式: 高亮当前选中棋子的可放置位置
+    if (state.mode === 'edit') {
+      ctx.fillStyle = 'rgba(246, 196, 83, 0.35)';
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (canPlacePiece(state.editSide, state.editType, c, r) && !pieceAt(c, r)) {
+            const { x, y } = cellToPixel(c, r);
+            ctx.beginPath();
+            ctx.arc(x, y, layout.pieceRadius * 0.45, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+
     // 棋子
     for (const p of state.pieces) drawPiece(p);
   }
@@ -869,6 +917,7 @@
   }
 
   function handleTap(col, row) {
+    if (state.mode === 'edit') return handleEditTap(col, row);
     if (state.winner) return;
     // AI 回合不允许人类点击
     if (currentPlayerIsAI()) return;
@@ -989,6 +1038,141 @@
     });
     draw();
   }
+
+  // =========================================================
+  // 编辑模式 (模拟功能)
+  // 在空棋盘上自由放置/移除棋子, 特殊棋子有位置约束
+  // =========================================================
+  function handleEditTap(col, row) {
+    const target = pieceAt(col, row);
+    if (target) {
+      // 该位置已有棋子: 移除
+      const idx = state.pieces.indexOf(target);
+      state.pieces.splice(idx, 1);
+      logger.info('edit_remove', { side: target.side, type: target.type, col, row });
+      draw();
+      return;
+    }
+    // 空位置: 尝试放置当前选中的棋子
+    const side = state.editSide, type = state.editType;
+    if (!canPlacePiece(side, type, col, row)) {
+      // 位置非法, 提示
+      const reason = (type === T.KING || type === T.ADVISOR)
+        ? '该棋子必须放在己方九宫格内'
+        : (type === T.ELEPHANT ? '相/象只能放在本方半场的 7 个田字落点上' : '');
+      editorTipEl.textContent = `❌ 不能放在这里: ${reason}`;
+      editorTipEl.style.color = '#ff6b6b';
+      setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 1800);
+      logger.warn('edit_place_denied', { side, type, col, row });
+      return;
+    }
+    state.pieces.push({ side, type, col, row });
+    logger.info('edit_place', { side, type, col, row });
+    draw();
+  }
+
+  // 渲染编辑模式棋子选择条
+  function renderEditorChips() {
+    const order = [T.KING, T.ADVISOR, T.ELEPHANT, T.HORSE, T.ROOK, T.CANNON, T.PAWN];
+    const buildChips = (side, container) => {
+      container.innerHTML = '';
+      for (const t of order) {
+        const chip = document.createElement('div');
+        chip.className = `editor__chip editor__chip--${side === RED ? 'red' : 'black'}`;
+        if (state.editSide === side && state.editType === t) chip.classList.add('is-selected');
+        chip.textContent = TEXT[side][t];
+        chip.addEventListener('click', () => {
+          state.editSide = side;
+          state.editType = t;
+          renderEditorChips();
+        });
+        container.appendChild(chip);
+      }
+    };
+    buildChips(RED, editorRedEl);
+    buildChips(BLACK, editorBlackEl);
+  }
+
+  function enterEditMode() {
+    state.mode = 'edit';
+    state.aiToken++;
+    state.aiThinking = false;
+    aiThinkingEl.hidden = true;
+    state.selected = null;
+    state.legalMoves = [];
+    state.history = [];
+    state.moveHistory = [];
+    state.winner = null;
+    state.turn = RED;
+    // 切换 UI
+    btnEditMode.classList.add('is-active');
+    btnEditMode.textContent = '退出编辑';
+    editorEl.hidden = false;
+    tipPlayEl.hidden = true;
+    btnUndo.style.display = 'none';
+    btnRestart.style.display = 'none';
+    btnFlip.style.display = 'none';
+    statusEl.textContent = '编辑模式 - 自由布置棋子';
+    statusEl.style.color = '#f6c453';
+    renderEditorChips();
+    draw();
+    logger.info('edit_enter', { pieces: state.pieces.length });
+  }
+
+  function exitEditMode(startPlay) {
+    state.mode = 'play';
+    btnEditMode.classList.remove('is-active');
+    btnEditMode.textContent = '模拟编辑';
+    editorEl.hidden = true;
+    tipPlayEl.hidden = false;
+    btnUndo.style.display = '';
+    btnRestart.style.display = '';
+    btnFlip.style.display = '';
+    if (startPlay) {
+      // 用当前编辑的局面开始对弈
+      state.turn = RED;
+      state.selected = null;
+      state.legalMoves = [];
+      state.history = [];
+      state.moveHistory = [];
+      state.winner = null;
+      logger.info('edit_start_play', { pieces: state.pieces.length });
+    }
+    draw();
+    updateStatus();
+  }
+
+  btnEditMode.addEventListener('click', () => {
+    if (state.mode === 'play') enterEditMode();
+    else exitEditMode(false);
+  });
+
+  btnEditClear.addEventListener('click', () => {
+    state.pieces = [];
+    draw();
+    logger.info('edit_clear', {});
+  });
+
+  btnEditDefault.addEventListener('click', () => {
+    state.pieces = createInitialPieces();
+    draw();
+    logger.info('edit_default', { pieces: state.pieces.length });
+  });
+
+  btnEditStart.addEventListener('click', () => {
+    // 必须双方都有帅才能开始
+    const hasRedKing = state.pieces.some(p => p.side === RED && p.type === T.KING);
+    const hasBlackKing = state.pieces.some(p => p.side === BLACK && p.type === T.KING);
+    if (!hasRedKing || !hasBlackKing) {
+      editorTipEl.textContent = '❌ 双方必须各有一个帅/将才能开始对弈';
+      editorTipEl.style.color = '#ff6b6b';
+      setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 2500);
+      return;
+    }
+    exitEditMode(true);
+    // 若红方是 AI, 自动开局
+    if (state.redPlayer !== 'human') setTimeout(maybeAITurn, 300);
+  });
 
   function updateStatus() {
     if (state.winner) {

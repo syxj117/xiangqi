@@ -31,10 +31,28 @@
 
     <footer class="app__footer app__footer--second">
       <button class="btn btn--toggle" id="btn-settings" type="button">AI 设置</button>
+      <button class="btn btn--edit" id="btn-edit-mode" type="button">模拟编辑</button>
       <span class="app__think" id="ai-thinking" hidden>AI 思考中…</span>
     </footer>
 
-    <p class="app__tip">点击棋子选中，再点击目标位置完成走子。在「AI 设置」中配置 AI 对手。</p>
+    <p class="app__tip" id="tip-play">点击棋子选中，再点击目标位置完成走子。在「AI 设置」中配置 AI 对手。</p>
+
+    <div class="editor" id="editor" hidden>
+      <div class="editor__row">
+        <span class="editor__label">红方</span>
+        <div class="editor__pieces" id="editor-red"></div>
+      </div>
+      <div class="editor__row">
+        <span class="editor__label">黑方</span>
+        <div class="editor__pieces" id="editor-black"></div>
+      </div>
+      <div class="editor__actions">
+        <button class="btn btn--small" id="btn-edit-clear" type="button">清空</button>
+        <button class="btn btn--small" id="btn-edit-default" type="button">标准开局</button>
+        <button class="btn btn--small btn--primary" id="btn-edit-start" type="button">开始对弈</button>
+      </div>
+      <p class="editor__tip" id="editor-tip">点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。</p>
+    </div>
   </div>
 
   <!-- AI 设置面板 (模态弹窗) -->

@@ -132,6 +132,23 @@ body {
   text-align: center;
   color: rgba(244, 233, 216, 0.6);
 }
+.app__tip[hidden] { display: none; }
+.btn--edit { background: rgba(246, 196, 83, 0.15); border-color: rgba(246, 196, 83, 0.3); color: #f6c453; }
+.btn--edit.is-active { background: linear-gradient(180deg, #f6c453, #c9952b); border-color: #c9952b; color: #2c2418; }
+.btn--small { font-size: 13px; padding: 8px 12px; }
+
+.editor { width: 100%; max-width: 480px; padding: 0 12px 12px; box-sizing: border-box; }
+.editor[hidden] { display: none; }
+.editor__row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.editor__label { font-size: 13px; color: rgba(244, 233, 216, 0.7); min-width: 28px; }
+.editor__pieces { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.editor__chip { width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff8e7, #e6c98f); border: 1.5px solid; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; cursor: pointer; user-select: none; transition: transform 0.08s; }
+.editor__chip:active { transform: scale(0.93); }
+.editor__chip--red { color: #d63031; border-color: #a8201f; }
+.editor__chip--black { color: #1f1f1f; border-color: #1f1f1f; }
+.editor__chip.is-selected { box-shadow: 0 0 0 3px rgba(247, 202, 75, 0.85); transform: scale(1.05); }
+.editor__actions { display: flex; gap: 8px; justify-content: center; margin: 6px 0; }
+.editor__tip { font-size: 11px; text-align: center; color: rgba(244, 233, 216, 0.55); margin: 4px 0 0; line-height: 1.5; }
 
 /* =================================================
    AI 设置模态弹窗
