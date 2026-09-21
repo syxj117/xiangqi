@@ -128,6 +128,9 @@
     aiThinking: false,   // AI 是否正在思考
     aiToken: 0,          // AI 回调世代号, 用于作废过期回调
     moveHistory: [],      // 走法记录 [{fromCol,fromRow,toCol,toRow,side}] 供 AI 上下文
+    positionHistory: [],    // 局面哈希历史 (三次重复和棋检测)
+    noCaptureCount: 0,     // 连续无吃子回合数 (六十回合限着)
+    checkStreak: { side: null, count: 0 },  // 连续将军计数 (长将判负)
     mode: 'play',         // 'play' 对战 | 'edit' 编辑
     editSide: RED,        // 编辑模式当前选中的方
     editType: T.KING,     // 编辑模式当前选中的棋子类型
@@ -543,8 +546,8 @@
     return moves;
   }
 
-  // ---------- 走子合法性(过滤送将) ----------
-  // 走子后己方将不能被对方吃, 否则非法
+  // ---------- 走子合法性(过滤送将 + 将帅对面) ----------
+  // 走子后己方将不能被对方吃, 且将帅不能面对面(白脸将)
   function isLegalMove(piece, toCol, toRow) {
     const fromCol = piece.col, fromRow = piece.row;
     const captured = pieceAt(toCol, toRow);
@@ -556,13 +559,31 @@
     }
     piece.col = toCol; piece.row = toRow;
 
-    const safe = !isKingInCheck(piece.side);
+    // 检查1: 己方是否被将军
+    const selfInCheck = isKingInCheck(piece.side);
+    // 检查2: 将帅是否面对面 (同列且中间无子)
+    const kingsFace = kingsFacingCheck();
 
     // 还原
     piece.col = fromCol; piece.row = fromRow;
     if (captured) state.pieces.push(captured);
 
-    return safe;
+    return !selfInCheck && !kingsFace;
+  }
+
+  // 检查双方将帅是否面对面 (同列且中间无子)
+  function kingsFacingCheck() {
+    const rk = state.pieces.find(p => p.type === T.KING && p.side === RED);
+    const bk = state.pieces.find(p => p.type === T.KING && p.side === BLACK);
+    if (!rk || !bk) return false;
+    if (rk.col !== bk.col) return false;
+    // 中间有没有子
+    const minR = Math.min(rk.row, bk.row);
+    const maxR = Math.max(rk.row, bk.row);
+    for (let r = minR + 1; r < maxR; r++) {
+      if (pieceAt(rk.col, r)) return false;
+    }
+    return true;
   }
 
   function getLegalMoves(piece) {
@@ -981,19 +1002,65 @@
       logger.info('win', { winner: state.winner });
     }
     state.turn = state.turn === RED ? BLACK : RED;
-    // 将死/和棋判定: 新回合方若无任何合法走法, 则结束
+
+    // ---------- 胜负与和棋判定 ----------
     if (!state.winner) {
-      const hasMove = state.pieces.some(p => p.side === state.turn && getLegalMoves(p).length > 0);
-      if (!hasMove) {
-        const inCheck = isKingInCheck(state.turn);
-        if (inCheck) {
-          // 被将军且无路可应 -> 将死, 上一步走子方胜
-          state.winner = state.turn === RED ? BLACK : RED;
-          logger.info('checkmate', { loser: state.turn, winner: state.winner });
-        } else {
-          // 未被将军但无路可走 -> 困毙, 和棋
+      // 1. 六十回合自然限着 (无吃子)
+      if (captured) {
+        state.noCaptureCount = 0;
+      } else {
+        state.noCaptureCount++;
+        if (state.noCaptureCount >= 120) {  // 双方各走60回合=120步
           state.winner = 'draw';
-          logger.info('stalemate', { side: state.turn });
+          logger.info('sixty_move_rule', { noCapture: state.noCaptureCount });
+        }
+      }
+
+      // 2. 长将判负: 同一方连续3次将军
+      const opponent = state.turn;  // 现在轮到对方, 刚走完的是 state.turn === opponent ? ...
+      const justMoved = state.turn === RED ? BLACK : RED;
+      const opponentInCheck = isKingInCheck(opponent);
+      if (opponentInCheck) {
+        if (state.checkStreak.side === justMoved) {
+          state.checkStreak.count++;
+        } else {
+          state.checkStreak = { side: justMoved, count: 1 };
+        }
+        if (state.checkStreak.count >= 3) {
+          // 长将3次判负 (但如果第3次将死对方, 前面已判赢, 到不了这里)
+          // 所以这里是连续3次将军但没将死的情况 -> 长将方负
+          state.winner = justMoved === RED ? BLACK : RED;
+          logger.info('perpetual_check', { loser: justMoved, count: state.checkStreak.count });
+        }
+      } else {
+        // 对方不在将军, 重置长将计数
+        state.checkStreak = { side: null, count: 0 };
+      }
+
+      // 3. 三次重复局面和棋
+      const posHash = boardHash();
+      state.positionHistory.push(posHash);
+      const last12 = state.positionHistory.slice(-12);  // 最近12步 (6回合)
+      const hashCounts = {};
+      for (const h of last12) hashCounts[h] = (hashCounts[h] || 0) + 1;
+      const maxCount = Math.max(...Object.values(hashCounts));
+      if (maxCount >= 3 && state.positionHistory.length >= 12) {
+        state.winner = 'draw';
+        logger.info('threefold_repetition', { maxCount, posHash });
+      }
+
+      // 4. 将死/困毙
+      if (!state.winner) {
+        const hasMove = state.pieces.some(p => p.side === state.turn && getLegalMoves(p).length > 0);
+        if (!hasMove) {
+          const inCheck = isKingInCheck(state.turn);
+          if (inCheck) {
+            state.winner = state.turn === RED ? BLACK : RED;
+            logger.info('checkmate', { loser: state.turn, winner: state.winner });
+          } else {
+            state.winner = 'draw';
+            logger.info('stalemate', { side: state.turn });
+          }
         }
       }
     }
@@ -1007,8 +1074,16 @@
     if (last.captured) state.pieces.push(last.captured);
     state.turn = last.side;
     state.winner = null;
-    // 同步移除走法记录
     state.moveHistory.pop();
+    state.positionHistory.pop();
+    // 重算 noCaptureCount: 从最后一次吃子位置开始数
+    state.noCaptureCount = 0;
+    for (let i = state.history.length - 1; i >= 0; i--) {
+      if (state.history[i].captured) break;
+      state.noCaptureCount++;
+    }
+    // 重算 checkStreak: 简化处理, undo 后清空
+    state.checkStreak = { side: null, count: 0 };
     logger.info('undo', { remaining: state.history.length, restored_side: last.side });
     return true;
   }
@@ -1020,6 +1095,12 @@
     state.legalMoves = [];
     state.history = [];
     state.moveHistory = [];
+    state.positionHistory = [];
+    state.noCaptureCount = 0;
+    state.checkStreak = { side: null, count: 0 };
+    state.positionHistory = [];
+    state.noCaptureCount = 0;
+    state.checkStreak = { side: null, count: 0 };
     state.winner = null;
     state.aiThinking = false;
     state.aiToken++;           // 作废正在排队的 AI 回调
@@ -1678,6 +1759,9 @@
     state.legalMoves = [];
     state.history = [];
     state.moveHistory = [];
+    state.positionHistory = [];
+    state.noCaptureCount = 0;
+    state.checkStreak = { side: null, count: 0 };
     state.winner = null;
     state.turn = RED;
     // 切换 body 类: CSS 自动隐藏所有 [data-play-only] 元素
@@ -1705,6 +1789,9 @@
       state.legalMoves = [];
       state.history = [];
       state.moveHistory = [];
+    state.positionHistory = [];
+    state.noCaptureCount = 0;
+    state.checkStreak = { side: null, count: 0 };
       state.winner = null;
       logger.info('edit_start_play', { pieces: state.pieces.length });
     }
