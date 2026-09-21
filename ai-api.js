@@ -22,6 +22,26 @@
 
   const STORAGE_KEY = 'xiangqi_ai_configs';
 
+  // ---------- API 密钥加密 ----------
+  // 简易 XOR + Base64 加密 (防止 localStorage 直接明文泄露)
+  // 注意: 纯前端无法做到真正安全, 这里仅作为基础混淆层
+  const ENC_KEY = 'xiangqi-v1-enc-key-2026';
+  function xorCipher(text, key) {
+    let out = '';
+    for (let i = 0; i < text.length; i++) {
+      out += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    return out;
+  }
+  function encrypt(plain) {
+    try { return btoa(unescape(encodeURIComponent(xorCipher(plain, ENC_KEY)))); }
+    catch (_) { return plain; }
+  }
+  function decrypt(cipher) {
+    try { return xorCipher(decodeURIComponent(escape(atob(cipher))), ENC_KEY); }
+    catch (_) { return cipher; }
+  }
+
   // 棋子中文名 (用于 prompt)
   const PIECE_CN = {
     k: '将', a: '士', e: '象', h: '马', r: '车', c: '炮', p: '卒',
@@ -51,7 +71,7 @@
         id: 'ai_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
         name: (cfg.name || '未命名AI').trim(),
         baseUrl: (cfg.baseUrl || 'https://api.openai.com/v1').trim(),
-        apiKey: (cfg.apiKey || '').trim(),
+        apiKey: encrypt((cfg.apiKey || '').trim()),  // 加密存储
         model: (cfg.model || 'gpt-4o-mini').trim(),
       };
       list.push(item);
@@ -74,7 +94,9 @@
     },
 
     get(id) {
-      return AIConfig.list().find(c => c.id === id) || null;
+      const c = AIConfig.list().find(c => c.id === id) || null;
+      if (c) c.apiKey = decrypt(c.apiKey);  // 返回时解密
+      return c;
     },
 
     _save(list) {
@@ -184,31 +206,58 @@ ${moves}${historyText}
   // =====================================================
   // API 调用 (通过 /ai-proxy 转发, 规避 CORS)
   // =====================================================
+  // 异常重试: 网络/超时重试 2 次, 429/5xx 退避重试, 4xx 立即失败
   async function callAI(config, messages) {
-    const resp = await fetch('/ai-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
-        messages: messages,
-        temperature: 0.7,
-        max_tokens: 256,
-      }),
-    });
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`proxy HTTP ${resp.status}: ${errText}`);
+    const maxRetry = 3;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxRetry; attempt++) {
+      try {
+        const resp = await fetch('/ai-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+            model: config.model,
+            messages: messages,
+            temperature: 0.7,
+            max_tokens: 256,
+          }),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          const err = new Error(`proxy HTTP ${resp.status}: ${errText}`);
+          err.status = resp.status;
+          throw err;
+        }
+        const result = await resp.json();
+        if (!result.ok) {
+          const err = new Error(result.error || 'AI proxy returned error');
+          err.status = 599;  // 视为服务端错误, 可重试
+          throw err;
+        }
+        // OpenAI 兼容格式: choices[0].message.content
+        const content = result.data?.choices?.[0]?.message?.content;
+        if (!content) throw new Error('AI response missing content');
+        return content.trim();
+      } catch (e) {
+        lastErr = e;
+        const status = e.status || 0;
+        // 4xx (除 429 外) 立即失败, 不重试
+        if (status >= 400 && status < 500 && status !== 429) {
+          throw e;
+        }
+        // 最后一次失败直接抛出
+        if (attempt === maxRetry) {
+          e.attempts = attempt;
+          throw e;
+        }
+        // 指数退避: 500ms, 1500ms
+        const delay = attempt === 1 ? 500 : 1500;
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
-    const result = await resp.json();
-    if (!result.ok) {
-      throw new Error(result.error || 'AI proxy returned error');
-    }
-    // OpenAI 兼容格式: choices[0].message.content
-    const content = result.data?.choices?.[0]?.message?.content;
-    if (!content) throw new Error('AI response missing content');
-    return content.trim();
+    throw lastErr || new Error('callAI failed');
   }
 
   // =====================================================

@@ -23,19 +23,44 @@
       <canvas id="board" class="board"></canvas>
     </main>
 
-    <footer class="app__footer">
+    <footer class="app__footer" data-play-only>
       <button class="btn" id="btn-undo" type="button">悔棋</button>
       <button class="btn btn--primary" id="btn-restart" type="button">重新开始</button>
       <button class="btn" id="btn-flip" type="text">翻转视角</button>
+      <button class="btn" id="btn-2p" type="button">本地双人</button>
     </footer>
 
-    <footer class="app__footer app__footer--second">
+    <footer class="app__footer app__footer--second" data-play-only>
       <button class="btn btn--toggle" id="btn-settings" type="button">AI 设置</button>
       <button class="btn btn--edit" id="btn-edit-mode" type="button">模拟编辑</button>
       <span class="app__think" id="ai-thinking" hidden>AI 思考中…</span>
     </footer>
 
-    <p class="app__tip" id="tip-play">点击棋子选中，再点击目标位置完成走子。在「AI 设置」中配置 AI 对手。</p>
+    <!-- AI 互弈控制条 (仅 AI vs AI 显示) -->
+    <footer class="app__footer app__footer--replay" id="replay-bar" data-play-only hidden>
+      <button class="btn btn--small" id="btn-replay-pause" type="button">暂停</button>
+      <button class="btn btn--small" id="btn-replay-step" type="button">单步</button>
+      <select class="modal__select modal__select--speed" id="replay-speed">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+    </footer>
+
+    <!-- 局面评分 + 计时 -->
+    <div class="app__meta" data-play-only>
+      <span class="app__meta-item" id="score-board">局面: 均势</span>
+      <span class="app__meta-item app__meta-item--red" id="time-red"></span>
+      <span class="app__meta-item app__meta-item--black" id="time-black"></span>
+    </div>
+
+    <!-- AI 思考进度条 -->
+    <div class="thinking-progress" id="thinking-progress" hidden>
+      <div class="thinking-progress__bar" id="thinking-bar"></div>
+    </div>
+
+    <p class="app__tip" id="tip-play" data-play-only>点击棋子选中，再点击目标位置完成走子。在「AI 设置」中配置 AI 对手。</p>
 
     <div class="editor" id="editor" hidden>
       <div class="editor__row">
@@ -77,6 +102,38 @@
       </section>
 
       <section class="modal__section">
+        <h3 class="modal__subtitle">个性化设置</h3>
+        <div class="modal__row">
+          <label class="modal__label">AI 难度</label>
+          <select class="modal__select" id="select-level">
+            <option value="1">入门</option>
+            <option value="2">初级</option>
+            <option value="3" selected>中级</option>
+            <option value="4">高级</option>
+          </select>
+        </div>
+        <div class="modal__row">
+          <label class="modal__label">棋盘皮肤</label>
+          <select class="modal__select" id="select-skin">
+            <option value="classic" selected>经典木色</option>
+            <option value="wood">深木</option>
+            <option value="jade">翡翠</option>
+            <option value="ink">水墨</option>
+          </select>
+        </div>
+        <div class="modal__row">
+          <label class="modal__label">每方限时</label>
+          <select class="modal__select" id="select-time">
+            <option value="0" selected>不限</option>
+            <option value="180">3 分钟</option>
+            <option value="300">5 分钟</option>
+            <option value="600">10 分钟</option>
+            <option value="900">15 分钟</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="modal__section">
         <h3 class="modal__subtitle">添加 AI 接口</h3>
         <div class="modal__row">
           <input class="modal__input" id="cfg-name" type="text" placeholder="名称 (如: 我的GPT)" />
@@ -102,7 +159,7 @@
     </div>
   </div>
 
-  <script src="./ai-api.js"></script>
-  <script src="./game.js"></script>
+  <script src="./ai-api.js?v=20260921"></script>
+  <script src="./game.js?v=20260921"></script>
 </body>
 </html>

@@ -139,6 +139,23 @@ body {
 
 .editor { width: 100%; max-width: 480px; padding: 0 12px 12px; box-sizing: border-box; }
 .editor[hidden] { display: none; }
+/* 编辑模式: 隐藏所有对战 UI (带 data-play-only 的元素) */
+body.is-edit-mode [data-play-only] { display: none !important; }
+
+/* 局面评分 + 计时 */
+.app__meta { display: flex; gap: 12px; padding: 4px 16px; font-size: 12px; justify-content: center; }
+.app__meta-item { color: rgba(244, 233, 216, 0.75); min-width: 60px; text-align: center; }
+.app__meta-item--red { color: #ff7675; }
+.app__meta-item--black { color: #dfe6e9; }
+
+/* AI 互弈控制条 */
+.app__footer--replay { padding: 6px 16px; gap: 8px; }
+.modal__select--speed { min-width: 70px; }
+
+/* AI 思考进度条 */
+.thinking-progress { width: 80%; max-width: 360px; height: 4px; background: rgba(255, 255, 255, 0.1); border-radius: 2px; margin: 4px auto 0; overflow: hidden; }
+.thinking-progress[hidden] { display: none; }
+.thinking-progress__bar { height: 100%; width: 0%; background: linear-gradient(90deg, #f6c453, #ff7675); transition: width 0.1s linear; border-radius: 2px; }
 .editor__row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .editor__label { font-size: 13px; color: rgba(244, 233, 216, 0.7); min-width: 28px; }
 .editor__pieces { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }

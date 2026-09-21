@@ -131,6 +131,16 @@
     mode: 'play',         // 'play' 对战 | 'edit' 编辑
     editSide: RED,        // 编辑模式当前选中的方
     editType: T.KING,     // 编辑模式当前选中的棋子类型
+    dragging: null,       // 拖拽中的棋子 { piece, fromCol, fromRow, x, y }
+    aiLevel: 3,           // 内置 AI 难度 1-4
+    aiSpeed: 1,           // AI 互弈播放倍速: 0.5/1/2/4
+    replayPaused: false,  // AI 互弈是否暂停
+    replayStep: false,    // AI 互弈单步信号 (一次性 true)
+    thinkingProgress: 0,   // AI 思考进度 0-100
+    skin: 'classic',      // 棋盘皮肤: classic/wood/jade/ink
+    timeLimit: 0,         // 每方限时(秒), 0=不限
+    redTime: 0, blackTime: 0,  // 双方剩余时间(秒)
+    timerHandle: null,    // 计时器
   };
 
   // ---------- DOM ----------
@@ -140,14 +150,23 @@
   const btnUndo = document.getElementById('btn-undo');
   const btnRestart = document.getElementById('btn-restart');
   const btnFlip = document.getElementById('btn-flip');
+  const btn2p = document.getElementById('btn-2p');
   const btnSettings = document.getElementById('btn-settings');
   const aiThinkingEl = document.getElementById('ai-thinking');
   const settingsOverlay = document.getElementById('settings-overlay');
   const btnCloseSettings = document.getElementById('btn-close-settings');
   const selectRed = document.getElementById('select-red');
   const selectBlack = document.getElementById('select-black');
+  const selectLevel = document.getElementById('select-level');
+  const selectSkin = document.getElementById('select-skin');
+  const selectTime = document.getElementById('select-time');
   const btnAddAI = document.getElementById('btn-add-ai');
   const aiListEl = document.getElementById('ai-list');
+  const replayBar = document.getElementById('replay-bar');
+  const btnReplayPause = document.getElementById('btn-replay-pause');
+  const btnReplayStep = document.getElementById('btn-replay-step');
+  const replaySpeed = document.getElementById('replay-speed');
+  const thinkingProgressEl = document.getElementById('thinking-progress');
   const cfgName = document.getElementById('cfg-name');
   const cfgBaseUrl = document.getElementById('cfg-baseurl');
   const cfgApiKey = document.getElementById('cfg-apikey');
@@ -237,7 +256,11 @@
 
   // ---------- 编辑模式: 棋子放置约束 ----------
   // 中国象棋标准开局位置规则:
-  //   帅/将、仕/士: 必须在己方九宫格内 (col 3-5, 红方 row 7-9 / 黑方 row 0-2)
+  //   帅/将: 必须在己方九宫格内 (col 3-5, 红方 row 7-9 / 黑方 row 0-2)
+  //   仕/士: 只能在九宫内 5 个位置 (中心 + 四角), 因为士只能斜走,
+  //          不能放在 2/4/6/8 这些边中点 (col 3/5 row 边值 或 col 4 row 中值)
+  //     红仕: (4,7)(4,8)(4,9)(3,8)(5,8) -> 即中心(4,8)+四角
+  //     黑士: (4,0)(4,1)(4,2)(3,1)(5,1) -> 即中心(4,1)+四角
   //   相/象: 必须在本方半场, 且只能放在 7 个固定"田字"落点上
   //     红相落点: (2,9)(2,5)(6,9)(6,5)(0,7)(4,7)(8,7)
   //     黑象落点: (2,0)(2,4)(6,0)(6,4)(0,2)(4,2)(8,2)
@@ -247,13 +270,66 @@
     [BLACK]: [[2, 0], [2, 4], [6, 0], [6, 4], [0, 2], [4, 2], [8, 2]],
   };
 
+  // 仕/士的合法落点: 九宫四角（共 4 个）
+  // 红方九宫: col 3-5, row 7-9，9 格按行优先编号 1-9：
+  //   1(3,7) 2(4,7) 3(5,7)
+  //   4(3,8) 5(4,8) 6(5,8)
+  //   7(3,9) 8(4,9) 9(5,9)
+  // 合法落点: 1/3/7/9 即四角（按用户要求，中心5号位不可放士）
+  const ADVISOR_POINTS = {
+    [RED]: [[3, 7], [5, 7], [3, 9], [5, 9]],
+    [BLACK]: [[3, 0], [5, 0], [3, 2], [5, 2]],
+  };
+
+  // 各棋子类型的最大数量（每方）：兵/卒 5 个，车/马/炮 2 个，帅/士/相 1 个
+  const PIECE_MAX_COUNT = {
+    [T.KING]: 1, [T.ADVISOR]: 2, [T.ELEPHANT]: 2,
+    [T.HORSE]: 2, [T.ROOK]: 2, [T.CANNON]: 2, [T.PAWN]: 5,
+  };
+
+  // 棋子位置合法性原因（用于编辑模式提示）
   function canPlacePiece(side, type, col, row) {
     if (!inBoard(col, row)) return false;
-    if (type === T.KING || type === T.ADVISOR) return inPalace(side, col, row);
+    if (type === T.KING) return inPalace(side, col, row);
+    if (type === T.ADVISOR) {
+      return ADVISOR_POINTS[side].some(([c, r]) => c === col && r === row);
+    }
     if (type === T.ELEPHANT) {
       return ELEPHANT_POINTS[side].some(([c, r]) => c === col && r === row);
     }
     return true;
+  }
+
+  // 校验编辑模式放置：含位置 + 同色多帅 + 同色同类棋子数量上限
+  // 返回 { ok: boolean, reason?: string }
+  function validateEditPlace(pieces, side, type, col, row) {
+    if (pieceAtEx(pieces, col, row)) {
+      return { ok: false, reason: '该位置已有棋子，请先移除' };
+    }
+    if (!canPlacePiece(side, type, col, row)) {
+      if (type === T.KING) return { ok: false, reason: '帅/将必须放在己方九宫格内' };
+      if (type === T.ADVISOR) return { ok: false, reason: '士/仕只能放在九宫四角及中心（共 5 个落点）' };
+      if (type === T.ELEPHANT) return { ok: false, reason: '相/象只能放在本方半场的 7 个田字落点' };
+      return { ok: false, reason: '不能放在这里' };
+    }
+    const sameSideKing = pieces.filter(p => p.side === side && p.type === T.KING);
+    if (type === T.KING && sameSideKing.length >= 1) {
+      return { ok: false, reason: (side === RED ? '红方' : '黑方') + '已有一个帅/将，不能再放' };
+    }
+    const sameTypeCount = pieces.filter(p => p.side === side && p.type === type).length;
+    const max = PIECE_MAX_COUNT[type];
+    if (sameTypeCount >= max) {
+      const cnName = side === RED
+        ? { k:'帅', a:'仕', e:'相', h:'马', r:'车', c:'炮', p:'兵' }[type]
+        : { k:'将', a:'士', e:'象', h:'马', r:'车', c:'炮', p:'卒' }[type];
+      return { ok: false, reason: (side === RED ? '红方' : '黑方') + cnName + '最多 ' + max + ' 个（已达上限）' };
+    }
+    return { ok: true };
+  }
+
+  // 在指定棋子集合中按坐标查子（不依赖全局 pieceAt，便于校验时使用临时数组）
+  function pieceAtEx(pieces, col, row) {
+    return pieces.find(p => p.col === col && p.row === row);
   }
 
   // 统计两点之间(不含端点)的棋子数
@@ -628,9 +704,18 @@
   }
 
   // AI 思考入口: 返回最佳走法, 含少量随机性避免每局完全相同
+  // AI 难度分级: depth 控制搜索深度, randomness 控制随机度
+  // level: 1=入门(depth=1, 高随机) 2=初级(depth=2) 3=中级(depth=3, 现行) 4=高级(depth=4, 严格)
+  const AI_LEVELS = {
+    1: { depth: 1, randomness: 60, label: '入门' },
+    2: { depth: 2, randomness: 30, label: '初级' },
+    3: { depth: 3, randomness: 15, label: '中级' },
+    4: { depth: 4, randomness: 0,  label: '高级' },
+  };
   function aiThink() {
-    const aiSide = BLACK;
-    const depth = 3;
+    const aiSide = state.turn;  // 按当前回合决定 AI 方
+    const levelCfg = AI_LEVELS[state.aiLevel] || AI_LEVELS[3];
+    const depth = levelCfg.depth;
     const moves = generateMoves(aiSide);
     if (moves.length === 0) return null;
     // 找到所有最高分走法, 从中随机选一 (top-k 池池)
@@ -645,9 +730,9 @@
       if (res.score > alpha) alpha = res.score;
     }
     scored.sort((a, b) => b.score - a.score);
-    // top-3 内随机 (如果分数接近)
+    // top-k 内随机 (难度越低, 随机池越宽)
     const topScore = scored[0].score;
-    const pool = scored.filter(s => s.score >= topScore - 15);
+    const pool = scored.filter(s => s.score >= topScore - levelCfg.randomness);
     const pick = pool[Math.floor(Math.random() * pool.length)];
     return pick.move;
   }
@@ -686,6 +771,22 @@
       logger.info('win', { winner: state.winner });
     }
     state.turn = state.turn === RED ? BLACK : RED;
+    // 将死/和棋判定: 新回合方若无任何合法走法, 则结束
+    if (!state.winner) {
+      const hasMove = state.pieces.some(p => p.side === state.turn && getLegalMoves(p).length > 0);
+      if (!hasMove) {
+        const inCheck = isKingInCheck(state.turn);
+        if (inCheck) {
+          // 被将军且无路可应 -> 将死, 上一步走子方胜
+          state.winner = state.turn === RED ? BLACK : RED;
+          logger.info('checkmate', { loser: state.turn, winner: state.winner });
+        } else {
+          // 未被将军但无路可走 -> 困毙, 和棋
+          state.winner = 'draw';
+          logger.info('stalemate', { side: state.turn });
+        }
+      }
+    }
   }
 
   function undo() {
@@ -727,12 +828,20 @@
     const { width, height, cell, padding } = layout;
     ctx.clearRect(0, 0, width, height);
 
-    // 背景
-    ctx.fillStyle = '#f0c987';
+    // 背景 (按皮肤)
+    const SKINS = {
+      classic: { bg: '#f0c987', line: '#5b3a1a', red: '#d63031', black: '#1f1f1f', pieceBg1: '#fff8e7', pieceBg2: '#e6c98f' },
+      wood:    { bg: '#d4a276', line: '#4a2c0d', red: '#a8201f', black: '#0d0d0d', pieceBg1: '#f5d7a8', pieceBg2: '#c08552' },
+      jade:    { bg: '#a8d8b9', line: '#1d3a2c', red: '#c0392b', black: '#1a1a1a', pieceBg1: '#e8f5ec', pieceBg2: '#7ab892' },
+      ink:     { bg: '#e8e3d8', line: '#2c2c2c', red: '#8b0000', black: '#000000', pieceBg1: '#f5f2e8', pieceBg2: '#b8b2a3' },
+    };
+    const skin = SKINS[state.skin] || SKINS.classic;
+    state._skin = skin;
+    ctx.fillStyle = skin.bg;
     ctx.fillRect(0, 0, width, height);
 
     // 网格线
-    ctx.strokeStyle = '#5b3a1a';
+    ctx.strokeStyle = skin.line;
     ctx.lineWidth = 1.2;
     // 横线 (10条)
     for (let r = 0; r < ROWS; r++) {
@@ -807,27 +916,66 @@
 
     // 编辑模式: 高亮当前选中棋子的可放置位置
     if (state.mode === 'edit') {
-      ctx.fillStyle = 'rgba(246, 196, 83, 0.35)';
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
-          if (canPlacePiece(state.editSide, state.editType, c, r) && !pieceAt(c, r)) {
-            const { x, y } = cellToPixel(c, r);
+          // 编辑模式高亮: 仅显示当前选中棋子还可放置的位置 (位置合法 + 未超数量上限 + 该格无子)
+          const placeable = validateEditPlace(state.pieces, state.editSide, state.editType, c, r);
+          const hasPiece = !!pieceAt(c, r);
+          if (!placeable.ok && !hasPiece) continue;
+          const { x, y } = cellToPixel(c, r);
+          // 已有棋子位置: 不再高亮放置提示 (避免误导), 仅在选中可移除时显示红虚圈
+          if (hasPiece) {
+            ctx.strokeStyle = 'rgba(255, 107, 107, 0.8)';
+            ctx.lineWidth = 1.8;
+            ctx.setLineDash([4, 3]);
             ctx.beginPath();
-            ctx.arc(x, y, layout.pieceRadius * 0.45, 0, Math.PI * 2);
+            ctx.arc(x, y, layout.pieceRadius + 5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } else {
+            // 空位: 绿色实心高亮 (醒目)
+            ctx.fillStyle = 'rgba(54, 179, 126, 0.45)';
+            ctx.beginPath();
+            ctx.arc(x, y, layout.pieceRadius * 0.9, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(54, 179, 126, 1)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, layout.pieceRadius * 0.9, 0, Math.PI * 2);
+            ctx.stroke();
+            // 中心圆点进一步突出
+            ctx.fillStyle = 'rgba(54, 179, 126, 1)';
+            ctx.beginPath();
+            ctx.arc(x, y, layout.pieceRadius * 0.18, 0, Math.PI * 2);
             ctx.fill();
           }
         }
       }
     }
 
-    // 棋子
-    for (const p of state.pieces) drawPiece(p);
+    // 棋子 (拖拽中的棋子不画原位, 留到悬浮层绘制)
+    for (const p of state.pieces) {
+      if (state.dragging && state.dragging.piece === p) continue;
+      drawPiece(p);
+    }
+
+    // 拖拽中的棋子: 跟随手指/鼠标
+    if (state.dragging) {
+      const { x, y, piece } = state.dragging;
+      // 半透明描影
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+      ctx.beginPath();
+      ctx.arc(x + 2, y + 3, layout.pieceRadius, 0, Math.PI * 2);
+      ctx.fill();
+      // 悬浮棋子
+      drawPieceAt(piece, x, y);
+    }
   }
 
   function drawPalaceCross(side) {
     const rows = side === RED ? [7, 9] : [0, 2];
     const cols = [3, 5];
-    ctx.strokeStyle = '#5b3a1a';
+    ctx.strokeStyle = (state._skin || {}).line || '#5b3a1a';
     ctx.lineWidth = 1.2;
     // 左上-右下
     const a = cellToPixel(cols[0], rows[0]);
@@ -877,32 +1025,41 @@
 
   function drawPiece(p) {
     const { x, y } = cellToPixel(p.col, p.row);
+    drawPieceAt(p, x, y);
+  }
+
+  // 在指定像素位置绘制棋子 (拖拽悬浮 + 常规均用)
+  function drawPieceAt(p, x, y) {
     const r = layout.pieceRadius;
     const isRed = p.side === RED;
+    const skin = state._skin || { red: '#d63031', black: '#1f1f1f', pieceBg1: '#fff8e7', pieceBg2: '#e6c98f' };
 
     // 棋子背景
     const grad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.2, x, y, r);
-    grad.addColorStop(0, '#fff8e7');
-    grad.addColorStop(1, '#e6c98f');
+    grad.addColorStop(0, skin.pieceBg1);
+    grad.addColorStop(1, skin.pieceBg2);
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
 
     // 外圈
-    ctx.strokeStyle = isRed ? '#a8201f' : '#1f1f1f';
+    ctx.strokeStyle = isRed ? skin.red : skin.black;
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
     // 内圈
-    ctx.strokeStyle = isRed ? 'rgba(168, 32, 31, 0.5)' : 'rgba(31, 31, 31, 0.5)';
+    const innerColor = isRed ? skin.red : skin.black;
+    ctx.strokeStyle = innerColor;
+    ctx.globalAlpha = 0.5;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(x, y, r * 0.82, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.globalAlpha = 1;
 
     // 文字
-    ctx.fillStyle = isRed ? '#d63031' : '#1f1f1f';
+    ctx.fillStyle = isRed ? skin.red : skin.black;
     ctx.font = `bold ${Math.round(r * 1.05)}px "PingFang SC", "Microsoft YaHei", serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -959,17 +1116,43 @@
 
   // 若当前回合是 AI, 异步触发 AI 走子
   // 用 aiToken 世代号: restart/undo 等会递增 token, 使过期的 AI 回调自动失效
+  // AI vs AI 时: 受 replayPaused/replayStep/aiSpeed 控制
   function maybeAITurn() {
     if (state.winner) return;
     if (!currentPlayerIsAI()) return;
+    if (state.aiThinking) return;  // 防止重入
+
+    // AI vs AI 模式: 检查暂停/单步
+    const isAiVsAi = state.redPlayer !== 'human' && state.blackPlayer !== 'human';
+    if (isAiVsAi) {
+      if (state.replayPaused && !state.replayStep) {
+        // 暂停中: 等待恢复, 不触发
+        return;
+      }
+      // 单步信号消费后清零
+      if (state.replayStep) state.replayStep = false;
+    }
+
     state.aiThinking = true;
     aiThinkingEl.hidden = false;
+    state.thinkingProgress = 0;
+    if (thinkingProgressEl) thinkingProgressEl.hidden = false;
     const token = state.aiToken;
     const player = state.turn === RED ? state.redPlayer : state.blackPlayer;
     const side = state.turn;
-    // AI vs AI 时给一点延迟, 方便观察
-    const delay = (state.redPlayer !== 'human' && state.blackPlayer !== 'human') ? 600 : 50;
+    // AI vs AI: 按倍速算延迟; 人 vs AI: 短延迟
+    const baseDelay = isAiVsAi ? Math.round(600 / state.aiSpeed) : 50;
+    const thinkDuration = isAiVsAi ? Math.max(200, baseDelay * 0.8) : 300;
+
+    // 思考进度动画 (60ms 步进)
+    let progressTimer = setInterval(() => {
+      if (token !== state.aiToken) { clearInterval(progressTimer); return; }
+      state.thinkingProgress = Math.min(95, state.thinkingProgress + (100 / (thinkDuration / 60)));
+      updateThinkingProgress();
+    }, 60);
+
     setTimeout(async () => {
+      clearInterval(progressTimer);
       // 若期间发生了 restart/undo, 此回调作废
       if (token !== state.aiToken) return;
       try {
@@ -978,28 +1161,56 @@
           // 内置 minimax AI
           mv = aiThink();
         } else {
-          // API AI
+          // API AI (callAI 内部含异常重试)
           mv = await apiThink(player, side);
         }
         if (mv) {
           const piece = mv.piece || pieceAt(mv.fromCol, mv.fromRow);
           if (piece) {
             const fromCol = piece.col, fromRow = piece.row;
+            const captured = pieceAt(mv.toCol, mv.toRow);
             makeMove(piece, mv.toCol, mv.toRow);
+            // 反馈
+            if (captured) { playSound('capture'); vibrate([15, 30, 15]); }
+            else { playSound('move'); vibrate(10); }
+            if (state.winner === 'draw') { playSound('check'); vibrate([50, 50, 50]); }
+            else if (state.winner) { playSound('check'); vibrate([50, 50, 50]); }
+            else if (isKingInCheck(state.turn)) { playSound('check'); vibrate([30, 30, 30]); }
             logger.info('ai_move', {
               player: player,
               side: side,
               piece: piece.type,
               from: [fromCol, fromRow],
               to: [mv.toCol, mv.toRow],
+              level: player === 'builtin' ? state.aiLevel : undefined,
             });
           }
         }
       } catch (e) {
-        logger.error('ai_think_failed', { player: player }, e);
+        logger.error('ai_think_failed', { player: player, msg: e.message });
+        // API AI 失败兜底: 用内置 AI 替代
+        if (player !== 'builtin') {
+          logger.warn('ai_fallback_builtin', { player: player });
+          try {
+            const mv = aiThink();
+            if (mv) {
+              const piece = mv.piece || pieceAt(mv.fromCol, mv.fromRow);
+              if (piece) {
+                makeMove(piece, mv.toCol, mv.toRow);
+                playSound('move'); vibrate(10);
+                logger.info('ai_move', { player: 'fallback', side, piece: piece.type, from: [piece.col, piece.row], to: [mv.toCol, mv.toRow] });
+              }
+            }
+          } catch (e2) {
+            logger.error('ai_fallback_failed', { msg: e2.message });
+          }
+        }
       } finally {
         state.aiThinking = false;
+        state.thinkingProgress = 100;
+        updateThinkingProgress();
         aiThinkingEl.hidden = true;
+        if (thinkingProgressEl) setTimeout(() => { thinkingProgressEl.hidden = true; }, 200);
         draw();
         updateStatus();
         // AI vs AI: 若对方也是 AI 且游戏未结束, 连锁触发
@@ -1007,7 +1218,12 @@
           maybeAITurn();
         }
       }
-    }, delay);
+    }, baseDelay);
+  }
+
+  function updateThinkingProgress() {
+    const bar = document.getElementById('thinking-bar');
+    if (bar) bar.style.width = state.thinkingProgress + '%';
   }
 
   // API AI 思考: 返回 { piece, toCol, toRow } 或 { fromCol, fromRow, toCol, toRow }
@@ -1039,6 +1255,148 @@
     draw();
   }
 
+  // ---------- 移动端反馈: 振动 + 音效 ----------
+  // 轻量 WebAudio 走子音效 (无需音频文件)
+  let audioCtx = null;
+  function getAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch (_) { audioCtx = null; }
+    }
+    return audioCtx;
+  }
+  // type: 'select' | 'move' | 'capture' | 'illegal' | 'check'
+  function playSound(type) {
+    const ctx = getAudio();
+    if (!ctx) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      // 不同事件用不同频率/波形
+      const presets = {
+        select:   { freq: 660, type: 'sine',     dur: 0.06, vol: 0.10 },
+        move:     { freq: 440, type: 'triangle', dur: 0.08, vol: 0.12 },
+        capture:  { freq: 220, type: 'sawtooth',dur: 0.12, vol: 0.15 },
+        illegal:  { freq: 180, type: 'square',  dur: 0.15, vol: 0.10 },
+        check:    { freq: 880, type: 'sine',    dur: 0.20, vol: 0.15 },
+      };
+      const p = presets[type] || presets.move;
+      osc.type = p.type;
+      osc.frequency.value = p.freq;
+      gain.gain.value = p.vol;
+      gain.gain.setValueAtTime(p.vol, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + p.dur);
+      osc.start();
+      osc.stop(ctx.currentTime + p.dur);
+    } catch (_) {}
+  }
+  // 触控振动 (仅部分浏览器支持, 失败静默)
+  function vibrate(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (_) {}
+  }
+
+  // ---------- 拖拽走棋 ----------
+  // state.dragging: { piece, fromCol, fromRow, x, y } 或 null
+  // touchstart 选中己方棋子 -> 可拖动到合法位置释放
+  function getEventPoint(e) {
+    const rect = canvas.getBoundingClientRect();
+    const point = e.touches ? e.touches[0] : e;
+    const x = (point.clientX - rect.left) * (layout.width / rect.width);
+    const y = (point.clientY - rect.top) * (layout.height / rect.height);
+    return { x, y, clientX: point.clientX, clientY: point.clientY };
+  }
+
+  function onPointerDown(e) {
+    if (state.mode === 'edit') {
+      // 编辑模式仍走点击逻辑
+      e.preventDefault();
+      const p = getEventPoint(e);
+      const cell = pixelToCell(p.x, p.y);
+      if (cell) handleEditTap(cell.col, cell.row);
+      return;
+    }
+    if (state.winner || state.aiThinking || currentPlayerIsAI()) return;
+    e.preventDefault();
+    const p = getEventPoint(e);
+    const cell = pixelToCell(p.x, p.y);
+    if (!cell) return;
+    const target = pieceAt(cell.col, cell.row);
+    // 若已选中且点的是合法走法 -> 直接走
+    if (state.selected) {
+      const move = state.legalMoves.find(m => m.col === cell.col && m.row === cell.row);
+      if (move) {
+        doMove(state.selected, cell.col, cell.row);
+        return;
+      }
+      // 切换选中
+      if (target && target.side === state.turn) {
+        selectPiece(target);
+        playSound('select'); vibrate(10);
+        // 开始拖拽
+        state.dragging = { piece: target, fromCol: target.col, fromRow: target.row, x: p.x, y: p.y };
+        return;
+      }
+      // 取消选中
+      state.selected = null;
+      state.legalMoves = [];
+      draw();
+      return;
+    }
+    // 未选中: 选中己方棋子并开始拖拽
+    if (target && target.side === state.turn) {
+      selectPiece(target);
+      playSound('select'); vibrate(10);
+      state.dragging = { piece: target, fromCol: target.col, fromRow: target.row, x: p.x, y: p.y };
+    } else if (target) {
+      playSound('illegal'); vibrate(20);
+      logger.warn('select_wrong_side', { clicked_side: target.side, turn: state.turn });
+    }
+  }
+
+  function onPointerMove(e) {
+    if (!state.dragging) return;
+    e.preventDefault();
+    const p = getEventPoint(e);
+    state.dragging.x = p.x;
+    state.dragging.y = p.y;
+    draw();
+  }
+
+  function onPointerUp(e) {
+    if (!state.dragging) return;
+    e.preventDefault();
+    const p = getEventPoint(e);
+    const cell = pixelToCell(p.x, p.y);
+    const drag = state.dragging;
+    state.dragging = null;
+    if (!cell) { draw(); return; }
+    // 释放位置在合法走法里 -> 走子
+    const move = state.legalMoves.find(m => m.col === cell.col && m.row === cell.row);
+    if (move) {
+      doMove(drag.piece, cell.col, cell.row);
+    } else {
+      // 释放位置非法: 仅保持选中状态, 不动
+      playSound('illegal'); vibrate(20);
+      draw();
+    }
+  }
+
+  // 执行走子 (统一入口, 含反馈)
+  function doMove(piece, toCol, toRow) {
+    const captured = pieceAt(toCol, toRow);
+    makeMove(piece, toCol, toRow);
+    state.selected = null;
+    state.legalMoves = [];
+    if (captured) { playSound('capture'); vibrate([15, 30, 15]); }
+    else { playSound('move'); vibrate(10); }
+    if (state.winner) { playSound('check'); vibrate([50, 50, 50]); }
+    else if (isKingInCheck(state.turn)) { playSound('check'); vibrate([30, 30, 30]); }
+    draw();
+    updateStatus();
+    maybeAITurn();
+  }
+
   // =========================================================
   // 编辑模式 (模拟功能)
   // 在空棋盘上自由放置/移除棋子, 特殊棋子有位置约束
@@ -1055,15 +1413,13 @@
     }
     // 空位置: 尝试放置当前选中的棋子
     const side = state.editSide, type = state.editType;
-    if (!canPlacePiece(side, type, col, row)) {
-      // 位置非法, 提示
-      const reason = (type === T.KING || type === T.ADVISOR)
-        ? '该棋子必须放在己方九宫格内'
-        : (type === T.ELEPHANT ? '相/象只能放在本方半场的 7 个田字落点上' : '');
-      editorTipEl.textContent = `❌ 不能放在这里: ${reason}`;
+    // 全位置合法性校验: 位置 + 同色多帅 + 同色同类棋子数量上限
+    const result = validateEditPlace(state.pieces, side, type, col, row);
+    if (!result.ok) {
+      editorTipEl.textContent = `❌ ${result.reason}`;
       editorTipEl.style.color = '#ff6b6b';
       setTimeout(() => { editorTipEl.textContent = '点棋子选中，再点空格放置；点已有棋子可移除。特殊棋子（帅/士/相）会自动限制可放位置。'; editorTipEl.style.color = ''; }, 1800);
-      logger.warn('edit_place_denied', { side, type, col, row });
+      logger.warn('edit_place_denied', { side, type, col, row, reason: result.reason });
       return;
     }
     state.pieces.push({ side, type, col, row });
@@ -1104,14 +1460,11 @@
     state.moveHistory = [];
     state.winner = null;
     state.turn = RED;
-    // 切换 UI
+    // 切换 body 类: CSS 自动隐藏所有 [data-play-only] 元素
+    document.body.classList.add('is-edit-mode');
     btnEditMode.classList.add('is-active');
     btnEditMode.textContent = '退出编辑';
     editorEl.hidden = false;
-    tipPlayEl.hidden = true;
-    btnUndo.style.display = 'none';
-    btnRestart.style.display = 'none';
-    btnFlip.style.display = 'none';
     statusEl.textContent = '编辑模式 - 自由布置棋子';
     statusEl.style.color = '#f6c453';
     renderEditorChips();
@@ -1121,13 +1474,10 @@
 
   function exitEditMode(startPlay) {
     state.mode = 'play';
+    document.body.classList.remove('is-edit-mode');
     btnEditMode.classList.remove('is-active');
     btnEditMode.textContent = '模拟编辑';
     editorEl.hidden = true;
-    tipPlayEl.hidden = false;
-    btnUndo.style.display = '';
-    btnRestart.style.display = '';
-    btnFlip.style.display = '';
     if (startPlay) {
       // 用当前编辑的局面开始对弈
       state.turn = RED;
@@ -1176,8 +1526,13 @@
 
   function updateStatus() {
     if (state.winner) {
-      statusEl.textContent = `${state.winner === RED ? '红方' : '黑方'}胜!`;
-      statusEl.style.color = '#f6c453';
+      if (state.winner === 'draw') {
+        statusEl.textContent = '和棋!';
+        statusEl.style.color = '#f6c453';
+      } else {
+        statusEl.textContent = `${state.winner === RED ? '红方' : '黑方'}胜!`;
+        statusEl.style.color = '#f6c453';
+      }
       return;
     }
     const sideText = state.turn === RED ? '红方' : '黑方';
@@ -1197,21 +1552,72 @@
       statusEl.textContent = `${who}走棋`;
       statusEl.style.color = '#f4e9d8';
     }
+    updateScoreBoard();
+    updateTimers();
   }
 
-  // 事件: 同时支持 touch 与 click
-  function onPointer(e) {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const point = e.touches ? e.touches[0] : e;
-    const x = (point.clientX - rect.left) * (layout.width / rect.width);
-    const y = (point.clientY - rect.top) * (layout.height / rect.height);
-    const cell = pixelToCell(x, y);
-    if (cell) handleTap(cell.col, cell.row);
+  // 局面评分: 显示双方优劣势 (红方视角, 正=红优)
+  function updateScoreBoard() {
+    const el = document.getElementById('score-board');
+    if (!el) return;
+    const score = evaluate(RED);
+    const abs = Math.abs(score);
+    const prefix = score > 0 ? '红+' : (score < 0 ? '黑+' : '均');
+    const text = abs > 50000 ? (score > 0 ? '红方占优' : '黑方占优')
+      : `${prefix}${Math.min(9999, abs)}`;
+    el.textContent = `局面: ${text}`;
+    el.style.color = score > 0 ? '#ff7675' : (score < 0 ? '#dfe6e9' : '#f4e9d8');
   }
 
-  canvas.addEventListener('click', onPointer, { passive: false });
-  canvas.addEventListener('touchstart', onPointer, { passive: false });
+  // 限时对弈: 显示双方剩余时间
+  function updateTimers() {
+    const redEl = document.getElementById('time-red');
+    const blackEl = document.getElementById('time-black');
+    if (state.timeLimit === 0) {
+      if (redEl) redEl.textContent = '';
+      if (blackEl) blackEl.textContent = '';
+      return;
+    }
+    if (redEl) redEl.textContent = formatTime(state.redTime);
+    if (blackEl) blackEl.textContent = formatTime(state.blackTime);
+  }
+  function formatTime(sec) {
+    if (sec < 0) sec = 0;
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' + s : s}`;
+  }
+  function startTimer() {
+    if (state.timerHandle) clearInterval(state.timerHandle);
+    if (state.timeLimit === 0) return;
+    state.redTime = state.timeLimit;
+    state.blackTime = state.timeLimit;
+    state.timerHandle = setInterval(() => {
+      if (state.winner) { clearInterval(state.timerHandle); return; }
+      if (state.turn === RED) state.redTime -= 1;
+      else state.blackTime -= 1;
+      // 超时判负
+      if (state.redTime <= 0) { state.winner = BLACK; onTimeOut(); }
+      else if (state.blackTime <= 0) { state.winner = RED; onTimeOut(); }
+      updateTimers();
+    }, 1000);
+  }
+  function onTimeOut() {
+    if (state.timerHandle) clearInterval(state.timerHandle);
+    playSound('check'); vibrate([50, 50, 50]);
+    logger.info('timeout', { winner: state.winner });
+    draw();
+    updateStatus();
+  }
+
+  // 事件: 同时支持触控与鼠标 (含拖拽)
+  canvas.addEventListener('mousedown', onPointerDown);
+  canvas.addEventListener('mousemove', onPointerMove);
+  window.addEventListener('mouseup', onPointerUp);
+  canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+  canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+  canvas.addEventListener('touchend', onPointerUp, { passive: false });
+  canvas.addEventListener('touchcancel', onPointerUp, { passive: false });
 
   btnUndo.addEventListener('click', () => {
     if (state.winner) return;
@@ -1288,12 +1694,24 @@
     if (e.target === settingsOverlay) closeSettings();
   });
 
+  // AI vs AI 时显示 replay 控制条; 人 vs AI 或双人时隐藏
+  function updateReplayBar() {
+    const isAiVsAi = state.redPlayer !== 'human' && state.blackPlayer !== 'human';
+    if (replayBar) replayBar.hidden = !isAiVsAi;
+  }
+  function restartWithReplay() {
+    restart();
+    updateReplayBar();
+    if (state.timeLimit > 0) startTimer();
+  }
+
   selectRed.addEventListener('change', () => {
     state.redPlayer = selectRed.value;
     state.aiToken++;
     logger.info('player_change', { side: 'r', player: state.redPlayer });
     state.selected = null;
     state.legalMoves = [];
+    updateReplayBar();
     draw();
     updateStatus();
     if (state.turn === RED && state.redPlayer !== 'human' && !state.winner) {
@@ -1307,12 +1725,72 @@
     logger.info('player_change', { side: 'b', player: state.blackPlayer });
     state.selected = null;
     state.legalMoves = [];
+    updateReplayBar();
     draw();
     updateStatus();
     if (state.turn === BLACK && state.blackPlayer !== 'human' && !state.winner) {
       maybeAITurn();
     }
   });
+
+  // 难度
+  selectLevel.addEventListener('change', () => {
+    state.aiLevel = parseInt(selectLevel.value, 10) || 3;
+    logger.info('ai_level', { level: state.aiLevel });
+  });
+  // 皮肤
+  selectSkin.addEventListener('change', () => {
+    state.skin = selectSkin.value;
+    logger.info('skin_change', { skin: state.skin });
+    draw();
+  });
+  // 限时
+  selectTime.addEventListener('change', () => {
+    state.timeLimit = parseInt(selectTime.value, 10) || 0;
+    logger.info('time_limit', { limit: state.timeLimit });
+    if (state.timeLimit > 0) startTimer();
+    else if (state.timerHandle) { clearInterval(state.timerHandle); state.timerHandle = null; }
+    updateTimers();
+  });
+
+  // AI 互弈控制: 暂停/单步/倍速
+  btnReplayPause.addEventListener('click', () => {
+    state.replayPaused = !state.replayPaused;
+    btnReplayPause.textContent = state.replayPaused ? '继续' : '暂停';
+    logger.info('replay_pause', { paused: state.replayPaused });
+    if (!state.replayPaused && !state.aiThinking && currentPlayerIsAI() && !state.winner) {
+      maybeAITurn();
+    }
+  });
+  btnReplayStep.addEventListener('click', () => {
+    state.replayStep = true;
+    state.replayPaused = true;
+    btnReplayPause.textContent = '继续';
+    logger.info('replay_step', {});
+    if (!state.aiThinking && currentPlayerIsAI() && !state.winner) {
+      maybeAITurn();
+    }
+  });
+  replaySpeed.addEventListener('change', () => {
+    state.aiSpeed = parseFloat(replaySpeed.value) || 1;
+    logger.info('replay_speed', { speed: state.aiSpeed });
+  });
+
+  // 本地双人快捷按钮
+  btn2p.addEventListener('click', () => {
+    state.redPlayer = 'human';
+    state.blackPlayer = 'human';
+    selectRed.value = 'human';
+    selectBlack.value = 'human';
+    state.aiToken++;
+    updateReplayBar();
+    restart();
+    logger.info('mode_2p', {});
+  });
+
+  // restart 按钮改为带 replay + timer 处理
+  btnRestart.removeEventListener('click', restart);
+  btnRestart.addEventListener('click', restartWithReplay);
 
   btnAddAI.addEventListener('click', () => {
     const name = cfgName.value.trim();
@@ -1356,6 +1834,11 @@
   // ---------- 启动 ----------
   try {
     computeLayout();
+    // 同步设置面板初始值
+    if (selectLevel) selectLevel.value = String(state.aiLevel);
+    if (selectSkin) selectSkin.value = state.skin;
+    if (selectTime) selectTime.value = String(state.timeLimit);
+    updateReplayBar();
     draw();
     updateStatus();
     logger.info('game_start', {
@@ -1363,8 +1846,18 @@
       flipped: state.flipped,
       red: state.redPlayer,
       black: state.blackPlayer,
+      aiLevel: state.aiLevel,
+      skin: state.skin,
     });
   } catch (e) {
     logger.error('init_failed', null, e);
   }
+
+  // === 临时调试出口 ===
+  window.__xiangqi_debug = {
+    canPlacePiece, validateEditPlace, ADVISOR_POINTS, PIECE_MAX_COUNT,
+    get state() { return state; },
+    get T() { return T; },
+  };
+  // === /临时调试出口 ===
 })();
