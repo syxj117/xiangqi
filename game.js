@@ -1422,6 +1422,7 @@
     makeMove(piece, toCol, toRow);
     state.selected = null;
     state.legalMoves = [];
+    state.dragging = null;  // 关键: 清掉拖拽状态, 否则 draw() 会在旧位置画悬浮棋子
     if (captured) { playSound('capture'); vibrate([15, 30, 15]); }
     else { playSound('move'); vibrate(10); }
     if (state.winner) { playSound('check'); vibrate([50, 50, 50]); }
