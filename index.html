@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+  />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#f0c987" />
+  <title>中国象棋</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app__header">
+      <h1 class="app__title">中 国 象 棋</h1>
+      <div class="app__status" id="status">红方先行</div>
+    </header>
+
+    <main class="app__board-wrap">
+      <canvas id="board" class="board"></canvas>
+    </main>
+
+    <footer class="app__footer">
+      <button class="btn" id="btn-undo" type="button">悔棋</button>
+      <button class="btn btn--primary" id="btn-restart" type="button">重新开始</button>
+      <button class="btn" id="btn-flip" type="text">翻转视角</button>
+    </footer>
+
+    <footer class="app__footer app__footer--second">
+      <button class="btn btn--toggle" id="btn-settings" type="button">AI 设置</button>
+      <span class="app__think" id="ai-thinking" hidden>AI 思考中…</span>
+    </footer>
+
+    <p class="app__tip">点击棋子选中，再点击目标位置完成走子。在「AI 设置」中配置 AI 对手。</p>
+  </div>
+
+  <!-- AI 设置面板 (模态弹窗) -->
+  <div class="modal-overlay" id="settings-overlay" hidden>
+    <div class="modal">
+      <header class="modal__header">
+        <h2 class="modal__title">AI 对手设置</h2>
+        <button class="modal__close" id="btn-close-settings" type="button">✕</button>
+      </header>
+
+      <section class="modal__section">
+        <h3 class="modal__subtitle">对弈模式</h3>
+        <div class="modal__row">
+          <label class="modal__label">红方</label>
+          <select class="modal__select" id="select-red"></select>
+        </div>
+        <div class="modal__row">
+          <label class="modal__label">黑方</label>
+          <select class="modal__select" id="select-black"></select>
+        </div>
+        <p class="modal__hint">选择"人类"由你操作，选择 AI 或"内置AI"自动走棋。红黑都选 AI 即可实现 AI 对弈。</p>
+      </section>
+
+      <section class="modal__section">
+        <h3 class="modal__subtitle">添加 AI 接口</h3>
+        <div class="modal__row">
+          <input class="modal__input" id="cfg-name" type="text" placeholder="名称 (如: 我的GPT)" />
+        </div>
+        <div class="modal__row">
+          <input class="modal__input" id="cfg-baseurl" type="text" placeholder="API Base URL (如: https://api.openai.com/v1)" />
+        </div>
+        <div class="modal__row">
+          <input class="modal__input" id="cfg-apikey" type="password" placeholder="API Key" />
+        </div>
+        <div class="modal__row">
+          <input class="modal__input" id="cfg-model" type="text" placeholder="模型名 (如: gpt-4o-mini)" />
+        </div>
+        <button class="btn btn--primary modal__add-btn" id="btn-add-ai" type="button">添加 AI</button>
+      </section>
+
+      <section class="modal__section">
+        <h3 class="modal__subtitle">已配置的 AI</h3>
+        <div class="modal__list" id="ai-list">
+          <p class="modal__empty">暂无 AI 配置，请在上方添加。</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="./ai-api.js"></script>
+  <script src="./game.js"></script>
+</body>
+</html>
