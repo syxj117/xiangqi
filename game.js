@@ -264,9 +264,9 @@
   //   相/象: 必须在本方半场, 且只能放在 7 个固定"田字"落点上
   //     红相落点: (2,9)(2,5)(6,9)(6,5)(0,7)(4,7)(8,7)
   //     黑象落点: (2,0)(2,4)(6,0)(6,4)(0,2)(4,2)(8,2)
-  //   兵/卒: 未过河时只能放初始位置前方（不能后退），过河后敌方区域任意位置
-  //     红兵初始 row=6: 己方(row≥5)只能 row≤6；敌方(row≤4)任意
-  //     黑卒初始 row=3: 己方(row≤4)只能 row≥3；敌方(row≥5)任意
+  //   兵/卒: 初始行仅5个兵位, 过河前沿任意列, 过河后敌方区域任意位置
+  //     红兵初始 row=6: row=6 仅 col{0,2,4,6,8}; row=5 任意; row<=4 敌方任意
+  //     黑卒初始 row=3: row=3 仅 col{0,2,4,6,8}; row=4 任意; row>=5 敌方任意
   //   马/车/炮: 棋盘任意位置均可
   const ELEPHANT_POINTS = {
     [RED]: [[2, 9], [2, 5], [6, 9], [6, 5], [0, 7], [4, 7], [8, 7]],
@@ -291,6 +291,7 @@
   };
 
   // 棋子位置合法性原因（用于编辑模式提示）
+  const PAWN_INIT_COLS = [0, 2, 4, 6, 8]; // 兵的5个初始列
   function canPlacePiece(side, type, col, row) {
     if (!inBoard(col, row)) return false;
     if (type === T.KING) return inPalace(side, col, row);
@@ -301,14 +302,21 @@
       return ELEPHANT_POINTS[side].some(([c, r]) => c === col && r === row);
     }
     if (type === T.PAWN) {
-      // 红兵初始 row=6, 前进方向 row 减小; 黑卒初始 row=3, 前进方向 row 增大
-      // 己方半场: 红 row>=5, 黑 row<=4; 过河后敌方区域任意
+      // 红兵: 初始 row=6, 前进方向 row 减小
+      //   row=6 (初始行): 只能 col ∈ {0,2,4,6,8}
+      //   row=5 (过河前沿): 任意 col
+      //   row<=4 (过河后): 敌方区域任意
       if (side === RED) {
-        if (row <= 4) return true;        // 过河后敌方区域任意
-        return row <= 6;                  // 未过河: 不能放到 row>6 的后方
+        if (row <= 4) return true;              // 过河后
+        if (row === 5) return true;             // 过河前沿, 任意列
+        if (row === 6) return PAWN_INIT_COLS.includes(col); // 初始行仅5兵位
+        return false;                           // row>6 后方不可
       } else {
-        if (row >= 5) return true;        // 过河后敌方区域任意
-        return row >= 3;                  // 未过河: 不能放到 row<3 的后方
+        // 黑卒: 初始 row=3, 前进方向 row 增大
+        if (row >= 5) return true;              // 过河后
+        if (row === 4) return true;             // 过河前沿, 任意列
+        if (row === 3) return PAWN_INIT_COLS.includes(col); // 初始行仅5兵位
+        return false;                           // row<3 后方不可
       }
     }
     return true;
@@ -325,8 +333,8 @@
       if (type === T.ADVISOR) return { ok: false, reason: '士/仕只能放在九宫 1/3/5/7/9 位置（共 5 个落点）' };
       if (type === T.ELEPHANT) return { ok: false, reason: '相/象只能放在本方半场的 7 个田字落点' };
       if (type === T.PAWN) {
-        if (side === RED) return { ok: false, reason: '红兵未过河只能放初始位置前方（不能后退）' };
-        return { ok: false, reason: '黑卒未过河只能放初始位置前方（不能后退）' };
+        if (side === RED) return { ok: false, reason: '红兵: 初始行仅5兵位(col 0/2/4/6/8)，后方不可放' };
+        return { ok: false, reason: '黑卒: 初始行仅5兵位(col 0/2/4/6/8)，后方不可放' };
       }
       return { ok: false, reason: '不能放在这里' };
     }
