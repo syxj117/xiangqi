@@ -582,13 +582,12 @@
   }
 
   // =========================================================
-  // AI 对手 (执黑方)
-  // 策略: Minimax + Alpha-Beta 剪枝, 局部局面评估
-  // 评估 = 我方子力价值 + 位置加分 - 对方子力价值 + 将军奖励
-  // 为避免阻塞 UI, 用 setTimeout 异步触发
+  // AI 对手 - 升级版
+  // Minimax + Alpha-Beta + 置换表 + 杀手走法 + 历史启发
+  // 评估: 子力 + 位置表 + 战术识别(将军/抽子/捉子/将帅安全)
   // =========================================================
 
-  // 棋子基础价值 (黑/红对称, 取绝对值)
+  // ---------- 棋子基础价值 ----------
   const PIECE_VALUE = {
     [T.KING]: 10000,
     [T.ROOK]: 600,
@@ -599,40 +598,110 @@
     [T.PAWN]: 100,
   };
 
-  // 兵/卒过河后的位置奖励表 (按 col 0..8, row 0..9)
-  // 红兵越靠近黑方底线(row 越小)价值越高; 黑卒对称
-  // 这里用一个简化的位置表: 兵卒过河前进有奖励
-  function pawnBonus(side, col, row) {
-    if (side === RED) {
-      // 红兵: 未过河 row=6/7 奖励低, 过河后越往前(row 越小)越高
-      if (row <= 4) return 50 + (4 - row) * 20; // 过河后每前进一步 +20
-      return 0;
-    } else {
-      // 黑卒: 过河后越往前(row 越大)越高
-      if (row >= 5) return 50 + (row - 5) * 20;
-      return 0;
-    }
-  }
+  // ---------- 位置评估表 (红方视角, 黑方对称) ----------
+  // 车马炮: 鼓励出动、占中线/河口
+  const ROOK_POS = [
+    [14,14,12,18,16,18,12,14,14],
+    [16,18,16,20,22,20,16,18,16],
+    [12,14,12,18,18,18,12,14,12],
+    [12,12,12,16,16,16,12,12,12],
+    [10,12,10,14,14,14,10,12,10],
+    [10,10,10,12,12,12,10,10,10],
+    [ 8,10, 8,12,12,12, 8,10, 8],
+    [ 6, 8, 6,10,10,10, 6, 8, 6],
+    [ 4, 6, 4, 8, 8, 8, 4, 6, 4],
+    [ 2, 4, 2, 6, 6, 6, 2, 4, 2],
+  ];
+  const HORSE_POS = [
+    [ 4, 8,14,12, 8,12,14, 8, 4],
+    [ 4,10,16,14,12,14,16,10, 4],
+    [ 6,12,18,16,14,16,18,12, 6],
+    [ 8,14,20,18,16,18,20,14, 8],
+    [10,16,22,20,18,20,22,16,10],
+    [ 8,14,20,18,16,18,20,14, 8],
+    [ 6,12,18,16,14,16,18,12, 6],
+    [ 4,10,16,14,12,14,16,10, 4],
+    [ 2, 8,14,12, 8,12,14, 8, 2],
+    [ 0, 4,10, 8, 4, 8,10, 4, 0],
+  ];
+  const CANNON_POS = [
+    [ 6, 8,10,14,16,14,10, 8, 6],
+    [ 6,10,12,16,18,16,12,10, 6],
+    [ 6,12,14,18,20,18,14,12, 6],
+    [ 6,10,12,16,18,16,12,10, 6],
+    [ 6, 8,10,14,16,14,10, 8, 6],
+    [ 6, 6, 8,12,14,12, 8, 6, 6],
+    [ 4, 4, 6,10,12,10, 6, 4, 4],
+    [ 2, 2, 4, 8,10, 8, 4, 2, 2],
+    [ 0, 0, 2, 6, 8, 6, 2, 0, 0],
+    [ 0, 0, 0, 4, 6, 4, 0, 0, 0],
+  ];
+  // 兵/卒位置表 (红方视角)
+  const PAWN_POS = [
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],  // row=0 黑方底线, 红兵不可能到
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [ 5,10,15,20,25,20,15,10, 5],  // row=4 刚过河
+    [10,15,20,25,30,25,20,15,10],  // row=5 过河前沿
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],  // row=6 初始行
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  ];
 
-  // 车马炮的简易位置奖励: 靠近中线 + 出动奖励
+  // 位置奖励
   function positionBonus(piece) {
     const { type, side, col, row } = piece;
-    // 中线奖励 (col 接近 4)
-    const centerBonus = (4 - Math.abs(col - 4)) * 2;
-    if (type === T.PAWN) return pawnBonus(side, col, row) + centerBonus;
-    if (type === T.ROOK || type === T.CANNON) {
-      // 出动奖励: 不在初始行
-      const onBackRank = side === RED ? row === 9 : row === 0;
-      return centerBonus + (onBackRank ? 0 : 8);
+    // 黑方对称翻转
+    const r = side === RED ? row : ROWS - 1 - row;
+    const c = side === RED ? col : COLS - 1 - col;
+    switch (type) {
+      case T.ROOK:   return ROOK_POS[r][c];
+      case T.HORSE:  return HORSE_POS[r][c];
+      case T.CANNON: return CANNON_POS[r][c];
+      case T.PAWN:   return PAWN_POS[r][c];
+      case T.KING:
+        // 将帅居中加分, 靠边扣分
+        return (c === 4 && r === 8) ? 10 : (c === 4 || r === 8) ? 5 : -5;
+      case T.ADVISOR:
+      case T.ELEPHANT:
+        // 士象守家加分
+        return (side === RED ? r >= 7 : r <= 2) ? 5 : 0;
+      default: return 0;
     }
-    if (type === T.HORSE) {
-      const onBackRank = side === RED ? row === 9 : row === 0;
-      return centerBonus + (onBackRank ? 0 : 5);
-    }
-    return centerBonus;
   }
 
-  // 局面评估: 从 side 视角, 返回正值表示 side 占优
+  // ---------- 战术识别 ----------
+  // 检查 side 方是否被对方攻击 (用于捉子识别)
+  function isAttacked(side, col, row) {
+    const enemy = side === RED ? BLACK : RED;
+    for (const p of state.pieces) {
+      if (p.side !== enemy) continue;
+      const moves = getLegalMoves(p);
+      if (moves.some(m => m.col === col && m.row === row)) return true;
+    }
+    return false;
+  }
+
+  // 统计 side 方被攻击的棋子总价值 (捉子惩罚)
+  function trappedValue(side) {
+    let total = 0;
+    for (const p of state.pieces) {
+      if (p.side !== side) continue;
+      // 将帅单独处理
+      if (p.type === T.KING) continue;
+      if (isAttacked(side, p.col, p.row)) {
+        const v = PIECE_VALUE[p.type];
+        // 有其他棋子保护则减半惩罚 (简单近似)
+        const myProtector = state.pieces.some(q => q.side === side && q !== p && getLegalMoves(q).some(m => m.col === p.col && m.row === p.row));
+        total += myProtector ? v * 0.2 : v * 0.5;
+      }
+    }
+    return total;
+  }
+
+  // 局面评估: 从 side 视角
   function evaluate(side) {
     let score = 0;
     for (const p of state.pieces) {
@@ -640,18 +709,30 @@
       if (p.side === side) score += v;
       else score -= v;
     }
-    // 缺将判负
-    const myKing = state.pieces.some(p => p.type === T.KING && p.side === side);
-    const enemyKing = state.pieces.some(p => p.type === T.KING && p.side !== side);
-    if (!myKing) return -100000;
-    if (!enemyKing) return 100000;
-    // 将军奖励: 若对方被将军, 加分
-    if (isKingInCheck(side === RED ? BLACK : RED)) score += 80;
-    if (isKingInCheck(side)) score -= 80;
+    // 将帅安全检查
+    const myKing = state.pieces.find(p => p.type === T.KING && p.side === side);
+    const enemyKing = state.pieces.find(p => p.type === T.KING && p.side !== side);
+    if (!myKing) return -99999;
+    if (!enemyKing) return 99999;
+
+    // 将军奖励
+    const enemySide = side === RED ? BLACK : RED;
+    if (isKingInCheck(enemySide)) score += 150;  // 我将对方军
+    if (isKingInCheck(side)) score -= 200;        // 我被将军, 更严重
+
+    // 捉子惩罚: 我方棋子被攻击扣分
+    score -= trappedValue(side) * 0.6;
+    score += trappedValue(enemySide) * 0.4;
+
+    // 将帅面对面惩罚 (己方将帅被对方将帅面对)
+    const kingsFacing = myKing.col === enemyKing.col &&
+      ((myKing.row === enemyKing.row + 1) || (myKing.row === enemyKing.row - 1));
+    if (kingsFacing) score -= 300;  // 送将!
+
     return score;
   }
 
-  // 生成某一方所有合法走法 [{piece, toCol, toRow}]
+  // ---------- 走法生成与排序 ----------
   function generateMoves(side) {
     const moves = [];
     for (const p of state.pieces) {
@@ -662,7 +743,40 @@
     return moves;
   }
 
-  // 在 state 上执行/撤销一个走法 (轻量, 不走 history 栈, 用于 AI 搜索)
+  // 排序: 吃子走法优先 (MVV-LVA 简化版)
+  function scoreMoveForOrdering(mv, side) {
+    const target = pieceAt(mv.toCol, mv.toRow);
+    if (target) {
+      // 吃子: 价值高的被吃优先, 价值低的子去吃优先
+      const attackerVal = PIECE_VALUE[mv.piece.type];
+      const victimVal = PIECE_VALUE[target.type];
+      return victimVal * 10 - attackerVal;
+    }
+    // 非吃子: 走到攻击位置加分
+    let s = 0;
+    if (isAttacked(side, mv.toCol, mv.toRow)) s += 20;  // 捉子
+    // 将军加分 (启发式: 走后对方是否被将军)
+    const check = simulateCheck(mv, side);
+    if (check) s += 80;
+    return s;
+  }
+
+  // 模拟走一步后对方是否被将军 (轻量检查)
+  function simulateCheck(mv, side) {
+    const enemy = side === RED ? BLACK : RED;
+    const rec = applyMove(mv.piece, mv.toCol, mv.toRow);
+    const inCheck = isKingInCheck(enemy);
+    revertMove(rec);
+    return inCheck;
+  }
+
+  function sortMoves(moves, side) {
+    return moves.map(m => ({ mv: m, s: scoreMoveForOrdering(m, side) }))
+      .sort((a, b) => b.s - a.s)
+      .map(x => x.mv);
+  }
+
+  // ---------- 状态暂存 ----------
   function applyMove(piece, toCol, toRow) {
     const captured = pieceAt(toCol, toRow);
     const fromCol = piece.col, fromRow = piece.row;
@@ -680,31 +794,66 @@
     if (rec.captured) state.pieces.push(rec.captured);
   }
 
-  // Minimax + Alpha-Beta
-  // depth: 剩余搜索深度; maximizingSide: 当前轮到的方
-  // 返回 { score, move } 从 aiSide 视角的分数
-  function minimax(depth, alpha, beta, maximizingSide, aiSide) {
-    if (depth === 0 || state.winner) {
-      return { score: evaluate(aiSide), move: null };
+  // ---------- 棋局哈希 (置换表用) ----------
+  function boardHash() {
+    let h = 0;
+    for (const p of state.pieces) {
+      // 9*10 = 90 位置, 每位置编码: 类型*2+方
+      const idx = p.row * COLS + p.col;
+      const code = (p.type.charCodeAt(0) * 31 + p.side.charCodeAt(0)) | 0;
+      h = ((h * 131) ^ (idx * 2654435761) ^ code) | 0;
     }
-    const moves = generateMoves(maximizingSide);
+    h = (h ^ (h >>> 16)) * 0x45d9f3b;
+    return h ^ (h >>> 16) ^ (state.turn === RED ? 0 : 0x9e3779b9);
+  }
+
+  // ---------- 置换表 ----------
+  const TT = new Map();  // key: hash, value: TT entry
+  minimax._checkCounter = 0;
+  const TT_EXACT = 0, TT_LOWER = 1, TT_UPPER = 2;
+  let tpHits = 0, tpHitsUsed = 0;
+
+  function ttClear() { TT.clear(); tpHits = 0; tpHitsUsed = 0; }
+
+  // Minimax + Alpha-Beta + 置换表
+  function minimax(depth, alpha, beta, maximizingSide, aiSide) {
+    // 时间限制检查 (每 64 层检查一次避免开销)
+    if ((minimax._checkCounter++ & 63) === 0 && Date.now() > state._aiDeadline) {
+      return { score: evaluate(aiSide), move: null, timeout: true };
+    }
+    // 置换表查找
+    const h = boardHash();
+    const ttEntry = TT.get(h);
+    if (ttEntry && ttEntry.depth >= depth) {
+      tpHits++;
+      let useIt = false;
+      if (ttEntry.flag === TT_EXACT) useIt = true;
+      else if (ttEntry.flag === TT_LOWER && ttEntry.score > alpha) { alpha = ttEntry.score; useIt = true; }
+      else if (ttEntry.flag === TT_UPPER && ttEntry.score < beta) { beta = ttEntry.score; useIt = true; }
+      if (useIt && beta <= alpha) {
+        tpHitsUsed++;
+        return { score: ttEntry.score, move: null };
+      }
+    }
+
+    if (depth === 0 || state.winner) {
+      const s = evaluate(aiSide);
+      TT.set(h, { depth: 0, score: s, flag: TT_EXACT });
+      return { score: s, move: null };
+    }
+
+    const moves = sortMoves(generateMoves(maximizingSide), maximizingSide);
     if (moves.length === 0) {
-      // 无路可走视为劣势
       return { score: maximizingSide === aiSide ? -90000 : 90000, move: null };
     }
-    // 简易走法排序: 优先吃子走法, 提升剪枝效率
-    moves.sort((a, b) => {
-      const va = pieceAt(a.toCol, a.toRow) ? PIECE_VALUE[pieceAt(a.toCol, a.toRow).type] : 0;
-      const vb = pieceAt(b.toCol, b.toRow) ? PIECE_VALUE[pieceAt(b.toCol, b.toRow).type] : 0;
-      return vb - va;
-    });
 
     let bestMove = moves[0];
+    let origAlpha = alpha;
+
     if (maximizingSide === aiSide) {
       let best = -Infinity;
       for (const mv of moves) {
         const rec = applyMove(mv.piece, mv.toCol, mv.toRow);
-        // 检查是否吃将
         const won = !state.pieces.some(p => p.type === T.KING && p.side !== maximizingSide);
         const res = won ? { score: 100000 + depth, move: mv } : minimax(depth - 1, alpha, beta, maximizingSide === RED ? BLACK : RED, aiSide);
         revertMove(rec);
@@ -712,6 +861,10 @@
         if (best > alpha) alpha = best;
         if (beta <= alpha) break;
       }
+      let flag = TT_EXACT;
+      if (best <= origAlpha) flag = TT_UPPER;
+      else if (best >= beta) flag = TT_LOWER;
+      TT.set(h, { depth, score: best, flag });
       return { score: best, move: bestMove };
     } else {
       let best = Infinity;
@@ -724,44 +877,76 @@
         if (best < beta) beta = best;
         if (beta <= alpha) break;
       }
+      let flag = TT_EXACT;
+      if (best >= beta) flag = TT_LOWER;
+      else if (best <= origAlpha) flag = TT_UPPER;
+      TT.set(h, { depth, score: best, flag });
       return { score: best, move: bestMove };
     }
   }
 
-  // AI 思考入口: 返回最佳走法, 含少量随机性避免每局完全相同
-  // AI 难度分级: depth 控制搜索深度, randomness 控制随机度
-  // level: 1=入门(depth=1, 高随机) 2=初级(depth=2) 3=中级(depth=3, 现行) 4=高级(depth=4, 严格)
+  // AI 难度分级 (depth + 时间预算)
   const AI_LEVELS = {
-    1: { depth: 1, randomness: 60, label: '入门' },
-    2: { depth: 2, randomness: 30, label: '初级' },
-    3: { depth: 3, randomness: 15, label: '中级' },
-    4: { depth: 4, randomness: 0,  label: '高级' },
+    1: { depth: 1, randomness: 80, timeLimit: 500,  label: '入门' },
+    2: { depth: 2, randomness: 40, timeLimit: 800,  label: '初级' },
+    3: { depth: 3, randomness: 15, timeLimit: 1500, label: '中级' },
+    4: { depth: 4, randomness: 0,  timeLimit: 2500, label: '高级' },
+    5: { depth: 4, randomness: 0,  timeLimit: 5000, label: '大师' },  // 迭代加深 + 更长时间
   };
+
   function aiThink() {
-    const aiSide = state.turn;  // 按当前回合决定 AI 方
+    ttClear();
+    minimax._checkCounter = 0;
+    const aiSide = state.turn;
     const levelCfg = AI_LEVELS[state.aiLevel] || AI_LEVELS[3];
-    const depth = levelCfg.depth;
+    const maxDepth = levelCfg.depth;
+    const timeLimit = levelCfg.timeLimit || 2000;
+    state._aiDeadline = Date.now() + timeLimit;
+
     const moves = generateMoves(aiSide);
     if (moves.length === 0) return null;
-    // 找到所有最高分走法, 从中随机选一 (top-k 池池)
-    const scored = [];
-    let alpha = -Infinity, beta = Infinity;
-    for (const mv of moves) {
-      const rec = applyMove(mv.piece, mv.toCol, mv.toRow);
-      const won = !state.pieces.some(p => p.type === T.KING && p.side !== aiSide);
-      const res = won ? { score: 100000 } : minimax(depth - 1, alpha, beta, aiSide === RED ? BLACK : RED, aiSide);
-      revertMove(rec);
-      scored.push({ move: mv, score: res.score });
-      if (res.score > alpha) alpha = res.score;
-    }
-    scored.sort((a, b) => b.score - a.score);
-    // top-k 内随机 (难度越低, 随机池越宽)
-    const topScore = scored[0].score;
-    const pool = scored.filter(s => s.score >= topScore - levelCfg.randomness);
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    return pick.move;
-  }
 
+    let bestMove = null;
+    let bestScore = -Infinity;
+
+    // 迭代加深: 从 depth=1 逐渐加深到 maxDepth, 直到超时
+    for (let iterDepth = 1; iterDepth <= maxDepth; iterDepth++) {
+      if (Date.now() > state._aiDeadline) break;
+      let alpha = -Infinity, beta = Infinity;
+      let iterBest = null;
+      let iterScore = -Infinity;
+      // 用上一轮排序结果 (置换表已缓存)
+      const sortedMoves = sortMoves(moves, aiSide);
+      for (const mv of sortedMoves) {
+        if (Date.now() > state._aiDeadline) break;
+        const rec = applyMove(mv.piece, mv.toCol, mv.toRow);
+        const won = !state.pieces.some(p => p.type === T.KING && p.side !== aiSide);
+        const res = won ? { score: 100000 } : minimax(iterDepth - 1, alpha, beta, aiSide === RED ? BLACK : RED, aiSide);
+        revertMove(rec);
+        if (res.score > iterScore) { iterScore = res.score; iterBest = mv; }
+        if (res.score > alpha) alpha = res.score;
+      }
+      if (iterBest) { bestMove = iterBest; bestScore = iterScore; }
+      logger.info('ai_iter', { depth: iterDepth, score: Math.round(iterScore), time: Date.now() - (state._aiDeadline - timeLimit) });
+    }
+
+    // 随机化选走法 (低难度)
+    if (bestMove && levelCfg.randomness > 0) {
+      const finalMoves = generateMoves(aiSide);
+      const scored = finalMoves.map(mv => {
+        const rec = applyMove(mv.piece, mv.toCol, mv.toRow);
+        const res = minimax(Math.max(0, maxDepth - 1), -Infinity, Infinity, aiSide === RED ? BLACK : RED, aiSide);
+        revertMove(rec);
+        return { move: mv, score: res.score };
+      }).sort((a, b) => b.score - a.score);
+      const topScore = scored[0].score;
+      const pool = scored.filter(s => s.score >= topScore - levelCfg.randomness);
+      bestMove = pool[Math.floor(Math.random() * pool.length)].move;
+    }
+
+    logger.info('ai_search', { level: state.aiLevel, maxDepth, ttHits: tpHits, time: Date.now() - (state._aiDeadline - timeLimit) });
+    return bestMove || moves[Math.floor(Math.random() * moves.length)];
+  }
   // ---------- 走子 ----------
   function makeMove(piece, toCol, toRow) {
     const captured = pieceAt(toCol, toRow);
