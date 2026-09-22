@@ -1431,6 +1431,15 @@
     return player !== 'human';
   }
 
+  // 获取人类玩家所在方 (双人对战时返回当前方)
+  function currentPlayerSide() {
+    const redIsHuman = state.redPlayer === 'human';
+    const blackIsHuman = state.blackPlayer === 'human';
+    if (redIsHuman && !blackIsHuman) return RED;
+    if (!redIsHuman && blackIsHuman) return BLACK;
+    return state.turn;  // 双人对战返回当前方
+  }
+
   function handleTap(col, row) {
     if (state.mode === 'edit') return handleEditTap(col, row);
     if (state.winner) return;
@@ -1533,9 +1542,7 @@
             // 反馈
             if (captured) { playSound('capture'); vibrate([15, 30, 15]); }
             else { playSound('move'); vibrate(10); }
-            if (state.winner === 'draw') { playSound('check'); vibrate([50, 50, 50]); }
-            else if (state.winner) { playSound('check'); vibrate([50, 50, 50]); }
-            else if (isKingInCheck(state.turn)) { playSound('check'); vibrate([30, 30, 30]); }
+            checkResultToast(side);
             logger.info('ai_move', {
               player: player,
               side: side,
@@ -1558,6 +1565,7 @@
               if (piece) {
                 makeMove(piece, mv.toCol, mv.toRow);
                 playSound('move'); vibrate(10);
+                checkResultToast(side);
                 logger.info('ai_move', { player: 'fallback', side, piece: piece.type, from: [piece.col, piece.row], to: [mv.toCol, mv.toRow] });
               }
             }
@@ -1618,16 +1626,42 @@
 
   // ---------- Toast 提醒 ----------
   let toastTimer = null;
-  function showToast(msg) {
+  function showToast(msg, type, duration) {
     if (!toastEl) return;
+    toastEl.className = 'app__toast';
+    if (type) toastEl.classList.add('app__toast--' + type);
     toastEl.textContent = msg;
     toastEl.classList.add('is-show');
     toastEl.hidden = false;
     clearTimeout(toastTimer);
+    const dur = duration || (type === 'check' ? 1600 : (type === 'win' || type === 'lose' || type === 'draw' ? 3000 : 1500));
     toastTimer = setTimeout(() => {
       toastEl.classList.remove('is-show');
-      setTimeout(() => { toastEl.hidden = true; }, 300);
-    }, 1500);
+      setTimeout(() => { toastEl.hidden = true; toastEl.className = 'app__toast'; }, 350);
+    }, dur);
+  }
+
+
+  // 统一处理走子后的将军/胜负 Toast 提醒
+  function checkResultToast(sideJustMoved) {
+    const humanSide = currentPlayerSide();
+    if (state.winner) {
+      const isDraw = state.winner === 'draw';
+      const winnerIsMe = !isDraw && state.winner === humanSide;
+      if (isDraw) showToast('和 棋', 'draw');
+      else if (winnerIsMe) showToast('胜 利!', 'win');
+      else showToast('失 败', 'lose');
+      playSound('check'); vibrate([50, 50, 50]);
+    } else if (isKingInCheck(state.turn)) {
+      // state.turn = 被将军的一方
+      if (state.turn === humanSide) {
+        showToast('将 军!', 'check');
+      } else {
+        const mySide = sideJustMoved === RED ? '红方' : '黑方';
+        showToast(`${mySide}将 军!`, 'check');
+      }
+      playSound('check'); vibrate([30, 30, 30]);
+    }
   }
 
   // ---------- 移动端反馈: 振动 + 音效 ----------
@@ -1773,6 +1807,8 @@
   // 执行走子 (统一入口, 含反馈)
   function doMove(piece, toCol, toRow) {
     const captured = pieceAt(toCol, toRow);
+    const sideBeforeMove = state.turn;  // 走子方 (刚走完的)
+    const enemySide = piece.side === RED ? BLACK : RED;
     makeMove(piece, toCol, toRow);
     state.selected = null;
     state.legalMoves = [];
@@ -1780,8 +1816,8 @@
     state.dragging = null;  // 关键: 清掉拖拽状态, 否则 draw() 会在旧位置画悬浮棋子
     if (captured) { playSound('capture'); vibrate([15, 30, 15]); }
     else { playSound('move'); vibrate(10); }
-    if (state.winner) { playSound('check'); vibrate([50, 50, 50]); }
-    else if (isKingInCheck(state.turn)) { playSound('check'); vibrate([30, 30, 30]); }
+
+    checkResultToast(piece.side);
     draw();
     updateStatus();
     maybeAITurn();
