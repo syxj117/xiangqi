@@ -120,6 +120,7 @@
     turn: RED,            // 当前回合
     selected: null,      // 选中的棋子
     legalMoves: [],      // 选中棋子的合法走法 [{col,row}]
+    rawMoves: [],        // 选中棋子的原始走法(含送将走法, 用于提示)
     history: [],          // 走子历史 (用于悔棋)
     flipped: false,      // 是否翻转视角
     winner: null,        // 胜方
@@ -150,6 +151,7 @@
   const canvas = document.getElementById('board');
   const ctx = canvas.getContext('2d');
   const statusEl = document.getElementById('status');
+  const toastEl = document.getElementById('toast');
   const btnUndo = document.getElementById('btn-undo');
   const btnRestart = document.getElementById('btn-restart');
   const btnFlip = document.getElementById('btn-flip');
@@ -1093,6 +1095,7 @@
     state.turn = RED;
     state.selected = null;
     state.legalMoves = [];
+    state.rawMoves = [];
     state.history = [];
     state.moveHistory = [];
     state.positionHistory = [];
@@ -1388,6 +1391,7 @@
         makeMove(state.selected, col, row);
         state.selected = null;
         state.legalMoves = [];
+    state.rawMoves = [];
         draw();
         updateStatus();
         maybeAITurn();
@@ -1402,6 +1406,7 @@
       logger.info('deselect', { from: [state.selected.col, state.selected.row], click: [col, row] });
       state.selected = null;
       state.legalMoves = [];
+    state.rawMoves = [];
       draw();
       return;
     }
@@ -1546,6 +1551,7 @@
 
   function selectPiece(piece) {
     state.selected = piece;
+    state.rawMoves = getMoves(piece);
     state.legalMoves = getLegalMoves(piece);
     logger.info('select', {
       side: piece.side, piece: piece.type,
@@ -1553,6 +1559,20 @@
       legal: state.legalMoves.length,
     });
     draw();
+  }
+
+  // ---------- Toast 提醒 ----------
+  let toastTimer = null;
+  function showToast(msg) {
+    if (!toastEl) return;
+    toastEl.textContent = msg;
+    toastEl.classList.add('is-show');
+    toastEl.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastEl.classList.remove('is-show');
+      setTimeout(() => { toastEl.hidden = true; }, 300);
+    }, 1500);
   }
 
   // ---------- 移动端反馈: 振动 + 音效 ----------
@@ -1629,6 +1649,13 @@
         doMove(state.selected, cell.col, cell.row);
         return;
       }
+      // 点击的是原始走法但非合法 -> 送将/白脸将, 提醒玩家
+      const rawMove = state.rawMoves.find(m => m.col === cell.col && m.row === cell.row);
+      if (rawMove && !target) {
+        showToast('此走法会送将, 不可走!');
+        playSound('illegal'); vibrate(20);
+        return;
+      }
       // 切换选中
       if (target && target.side === state.turn) {
         selectPiece(target);
@@ -1640,6 +1667,7 @@
       // 取消选中
       state.selected = null;
       state.legalMoves = [];
+    state.rawMoves = [];
       draw();
       return;
     }
@@ -1676,6 +1704,11 @@
     if (move) {
       doMove(drag.piece, cell.col, cell.row);
     } else {
+      // 检查是否是送将走法
+      const rawMove = state.rawMoves.find(m => m.col === cell.col && m.row === cell.row);
+      if (rawMove) {
+        showToast('此走法会送将, 不可走!');
+      }
       // 释放位置非法: 仅保持选中状态, 不动
       playSound('illegal'); vibrate(20);
       draw();
@@ -1688,6 +1721,7 @@
     makeMove(piece, toCol, toRow);
     state.selected = null;
     state.legalMoves = [];
+    state.rawMoves = [];
     state.dragging = null;  // 关键: 清掉拖拽状态, 否则 draw() 会在旧位置画悬浮棋子
     if (captured) { playSound('capture'); vibrate([15, 30, 15]); }
     else { playSound('move'); vibrate(10); }
@@ -1757,6 +1791,7 @@
     aiThinkingEl.hidden = true;
     state.selected = null;
     state.legalMoves = [];
+    state.rawMoves = [];
     state.history = [];
     state.moveHistory = [];
     state.positionHistory = [];
@@ -1787,6 +1822,7 @@
       state.turn = RED;
       state.selected = null;
       state.legalMoves = [];
+    state.rawMoves = [];
       state.history = [];
       state.moveHistory = [];
     state.positionHistory = [];
@@ -1874,6 +1910,7 @@
       state.history = [];
       state.selected = null;
       state.legalMoves = [];
+    state.rawMoves = [];
       draw();
       const time = data.savedAt ? new Date(data.savedAt).toLocaleString() : '';
       editorTipEl.textContent = `✅ 已读取备份（${state.pieces.length} 个棋子${time ? '，备份于 ' + time : ''}）`;
@@ -1995,6 +2032,7 @@
     state.aiToken++;           // 作废可能正在排队的 AI 回调
     state.selected = null;
     state.legalMoves = [];
+    state.rawMoves = [];
     draw();
     updateStatus();
   });
@@ -2006,6 +2044,7 @@
     state.flipped = !state.flipped;
     state.selected = null;
     state.legalMoves = [];
+    state.rawMoves = [];
     logger.info('flip', { flipped: state.flipped });
     draw();
   });
@@ -2074,6 +2113,7 @@
     logger.info('player_change', { side: 'r', player: state.redPlayer });
     state.selected = null;
     state.legalMoves = [];
+    state.rawMoves = [];
     updateReplayBar();
     draw();
     updateStatus();
@@ -2088,6 +2128,7 @@
     logger.info('player_change', { side: 'b', player: state.blackPlayer });
     state.selected = null;
     state.legalMoves = [];
+    state.rawMoves = [];
     updateReplayBar();
     draw();
     updateStatus();
