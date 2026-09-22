@@ -13,8 +13,52 @@
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <div class="app">
+  
+  <!-- ========== 首页 Splash ========== -->
+  <div class="splash" id="splash">
+    <div class="splash__decor">
+      <span class="splash__piece splash__piece--r">車</span>
+      <span class="splash__piece splash__piece--b">馬</span>
+      <span class="splash__piece splash__piece--r">炮</span>
+      <span class="splash__piece splash__piece--b">象</span>
+    </div>
+    <div class="splash__inner">
+      <h1 class="splash__title">中 国 象 棋</h1>
+      <p class="splash__subtitle">对 弈 · 智 趣 · 千 年</p>
+      <div class="splash__menu">
+        <button class="splash__btn" data-mode="single">
+          <span class="splash__btn-icon">🤖</span>
+          <span class="splash__btn-text">
+            <span class="splash__btn-title">单人对弈</span>
+            <span class="splash__btn-desc">我 vs AI 大师</span>
+          </span>
+          <span class="splash__btn-arrow">›</span>
+        </button>
+        <button class="splash__btn" data-mode="double">
+          <span class="splash__btn-icon">👥</span>
+          <span class="splash__btn-text">
+            <span class="splash__btn-title">本地双人</span>
+            <span class="splash__btn-desc">同机对坐 · 轮流走子</span>
+          </span>
+          <span class="splash__btn-arrow">›</span>
+        </button>
+        <button class="splash__btn" data-mode="ai">
+          <span class="splash__btn-icon">⚔️</span>
+          <span class="splash__btn-text">
+            <span class="splash__btn-title">AI 观战</span>
+            <span class="splash__btn-desc">看 AI 自对一局</span>
+          </span>
+          <span class="splash__btn-arrow">›</span>
+        </button>
+      </div>
+      <button class="splash__settings-btn" id="splash-settings">⚙️ 高级设置</button>
+      <p class="splash__footer">内置 Minimax + α-Beta 剪枝 · 置换表加速</p>
+    </div>
+  </div>
+
+  <div class="app" id="app" hidden>
     <header class="app__header">
+      <button class="app__back" id="btn-home" type="button" aria-label="返回首页">‹</button>
       <h1 class="app__title">中 国 象 棋</h1>
       <div class="app__status" id="status">红方先行</div>
       <div class="app__toast" id="toast" hidden></div>
@@ -163,7 +207,7 @@
     </div>
   </div>
 
-  <script src="./ai-api.js?v=20260921j"></script>
-  <script src="./game.js?v=20260921j"></script>
+  <script src="./ai-api.js?v=20260922a"></script>
+  <script src="./game.js?v=20260922a"></script>
 </body>
 </html>

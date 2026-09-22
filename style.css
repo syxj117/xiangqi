@@ -375,3 +375,174 @@ body.is-edit-mode [data-play-only] { display: none !important; }
 .modal__ai-del:active {
   background: rgba(214, 48, 49, 0.35);
 }
+
+/* ============ 首页 Splash ============ */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at top, #5b4428 0%, #2c2418 70%);
+  padding: 40px 24px;
+  animation: splashFade 0.4s ease-out;
+}
+@keyframes splashFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.splash__decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.splash__piece {
+  position: absolute;
+  font-size: 64px;
+  opacity: 0.06;
+  font-weight: 700;
+  animation: floatPiece 8s ease-in-out infinite;
+}
+.splash__piece--r { color: #d63031; }
+.splash__piece--b { color: #1f1f1f; }
+.splash__piece:nth-child(1) { top: 8%; left: 6%; animation-delay: 0s; }
+.splash__piece:nth-child(2) { top: 15%; right: 8%; animation-delay: -2s; font-size: 56px; }
+.splash__piece:nth-child(3) { bottom: 22%; left: 10%; animation-delay: -4s; font-size: 72px; }
+.splash__piece:nth-child(4) { bottom: 10%; right: 6%; animation-delay: -6s; font-size: 48px; }
+@keyframes floatPiece {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(-16px) rotate(3deg); }
+}
+
+.splash__inner {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+
+.splash__title {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 10px;
+  color: var(--accent);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 30px rgba(246, 196, 83, 0.3);
+}
+.splash__subtitle {
+  margin: 8px 0 0;
+  font-size: 14px;
+  letter-spacing: 6px;
+  color: rgba(244, 233, 216, 0.6);
+}
+
+.splash__menu {
+  margin-top: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.splash__btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, rgba(246, 196, 83, 0.12), rgba(246, 196, 83, 0.04));
+  border: 1px solid rgba(246, 196, 83, 0.25);
+  border-radius: 14px;
+  color: #f4e9d8;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.15s, background 0.2s, border-color 0.2s;
+}
+.splash__btn:active {
+  transform: scale(0.97);
+  background: rgba(246, 196, 83, 0.2);
+  border-color: rgba(246, 196, 83, 0.5);
+}
+.splash__btn-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+.splash__btn-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.splash__btn-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #f4e9d8;
+}
+.splash__btn-desc {
+  font-size: 12px;
+  color: rgba(244, 233, 216, 0.55);
+}
+.splash__btn-arrow {
+  font-size: 26px;
+  color: rgba(246, 196, 83, 0.6);
+  font-weight: 300;
+}
+
+.splash__settings-btn {
+  margin-top: 28px;
+  background: none;
+  border: none;
+  color: rgba(244, 233, 216, 0.5);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 8px 16px;
+  transition: color 0.2s;
+}
+.splash__settings-btn:active { color: var(--accent); }
+
+.splash__footer {
+  margin-top: 36px;
+  font-size: 11px;
+  color: rgba(244, 233, 216, 0.3);
+  letter-spacing: 1px;
+}
+
+.splash.is-hide {
+  animation: splashHide 0.3s ease-in forwards;
+}
+@keyframes splashHide {
+  to { opacity: 0; transform: scale(0.95); pointer-events: none; }
+}
+
+/* ============ 返回首页按钮 ============ */
+.app__back {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(246, 196, 83, 0.15);
+  border: 1px solid rgba(246, 196, 83, 0.3);
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  transition: background 0.15s, transform 0.1s;
+}
+.app__back:active {
+  background: rgba(246, 196, 83, 0.35);
+  transform: scale(0.92);
+}
+
+.app__header {
+  position: relative;
+}

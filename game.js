@@ -188,6 +188,61 @@
   const btnEditLoad = document.getElementById('btn-edit-load');
   const btnEditStart = document.getElementById('btn-edit-start');
 
+  // ---------- 首页 Splash ----------
+  const splashEl = document.getElementById('splash');
+  const appEl = document.getElementById('app');
+  const btnHome = document.getElementById('btn-home');
+
+  function enterGameMode(mode) {
+    // 根据模式配置玩家
+    if (mode === 'single') {
+      state.redPlayer = 'human';
+      state.blackPlayer = 'builtin';
+    } else if (mode === 'double') {
+      state.redPlayer = 'human';
+      state.blackPlayer = 'human';
+    } else if (mode === 'ai') {
+      state.redPlayer = 'builtin';
+      state.blackPlayer = 'builtin';
+    }
+    // 重置局面
+    restart();
+    // 隐藏首页, 显示棋盘
+    splashEl.classList.add('is-hide');
+    setTimeout(() => {
+      splashEl.hidden = true;
+      appEl.hidden = false;
+    }, 300);
+  }
+
+  function goHome() {
+    state.aiToken++;  // 作废 AI
+    state.aiThinking = false;
+    state.winner = null;
+    restart();
+    appEl.hidden = true;
+    splashEl.hidden = false;
+    splashEl.classList.remove('is-hide');
+  }
+
+  // 绑定首页按钮
+  document.querySelectorAll('.splash__btn').forEach(btn => {
+    btn.addEventListener('click', () => enterGameMode(btn.dataset.mode));
+  });
+  if (document.getElementById('splash-settings')) {
+    document.getElementById('splash-settings').addEventListener('click', () => {
+      splashEl.hidden = true;
+      appEl.hidden = false;
+      splashEl.classList.add('is-hide');
+      // 打开设置面板
+      setTimeout(() => {
+        settingsOverlay.hidden = false;
+      }, 300);
+    });
+  }
+  if (btnHome) btnHome.addEventListener('click', goHome);
+
+
   // ---------- 渲染参数 ----------
   let layout = {
     cell: 40,            // 单元格像素
