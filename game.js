@@ -1644,21 +1644,42 @@
 
   // 统一处理走子后的将军/胜负 Toast 提醒
   function checkResultToast(sideJustMoved) {
-    const humanSide = currentPlayerSide();
     if (state.winner) {
       const isDraw = state.winner === 'draw';
-      const winnerIsMe = !isDraw && state.winner === humanSide;
-      if (isDraw) showToast('和 棋', 'draw');
-      else if (winnerIsMe) showToast('胜 利!', 'win');
-      else showToast('失 败', 'lose');
+      if (isDraw) {
+        showToast('和 棋', 'draw');
+      } else {
+        const redIsHuman = state.redPlayer === 'human';
+        const blackIsHuman = state.blackPlayer === 'human';
+        const isSinglePlayer = (redIsHuman && !blackIsHuman) || (!redIsHuman && blackIsHuman);
+        if (isSinglePlayer) {
+          // 单人模式: 以人类方为基准
+          const humanSide = redIsHuman ? RED : BLACK;
+          if (state.winner === humanSide) showToast('胜 利!', 'win');
+          else showToast('失 败', 'lose');
+        } else {
+          // 双人/AI观战: 显示哪方胜
+          const winText = state.winner === RED ? '红方胜!' : '黑方胜!';
+          showToast(winText, 'win');
+        }
+      }
       playSound('check'); vibrate([50, 50, 50]);
     } else if (isKingInCheck(state.turn)) {
-      // state.turn = 被将军的一方
-      if (state.turn === humanSide) {
-        showToast('将 军!', 'check');
+      const redIsHuman = state.redPlayer === 'human';
+      const blackIsHuman = state.blackPlayer === 'human';
+      const isSinglePlayer = (redIsHuman && !blackIsHuman) || (!redIsHuman && blackIsHuman);
+      if (isSinglePlayer) {
+        const humanSide = redIsHuman ? RED : BLACK;
+        if (state.turn === humanSide) {
+          showToast('将 军!', 'check');
+        } else {
+          const mySide = sideJustMoved === RED ? '红方' : '黑方';
+          showToast(`${mySide}将 军!`, 'check');
+        }
       } else {
-        const mySide = sideJustMoved === RED ? '红方' : '黑方';
-        showToast(`${mySide}将 军!`, 'check');
+        // 双人: 显示被将军方
+        const checkSide = state.turn === RED ? '红方' : '黑方';
+        showToast(`${checkSide}被将!`, 'check');
       }
       playSound('check'); vibrate([30, 30, 30]);
     }
